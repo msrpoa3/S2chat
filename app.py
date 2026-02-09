@@ -1,3 +1,6 @@
+# ==========================================
+# BLOCO 1: IMPORTAÇÕES E CONFIGURAÇÕES INICIAIS
+# ==========================================
 import os
 import psycopg2
 import requests
@@ -12,7 +15,7 @@ app = Flask(__name__)
 app.secret_key = "cafe_com_seguranca_2026" 
 app.permanent_session_lifetime = timedelta(hours=2)
 
-# --- CONFIGURAÇÕES ---
+# Variáveis de Ambiente
 SENHA_ELE = os.getenv("SENHA_ELE")
 SENHA_ELA = os.getenv("SENHA_ELA")
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -20,9 +23,15 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 BUCKET_NAME = os.getenv("BUCKET_NAME")
 
+# ==========================================
+# BLOCO 2: UTILITÁRIOS E CONEXÕES
+# ==========================================
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, connect_timeout=10)
 
+# ==========================================
+# BLOCO 3: GESTÃO DE ACESSO (LOGIN/LOGOUT)
+# ==========================================
 @app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -54,6 +63,9 @@ def sair():
     session.clear()
     return redirect(url_for('login'))
 
+# ==========================================
+# BLOCO 4: NÚCLEO DO CHAT (LÓGICA E STORAGE)
+# ==========================================
 @app.route("/chat", methods=["GET", "POST"])
 def chat():
     senha = session.get('senha')
@@ -67,6 +79,7 @@ def chat():
         file = request.files.get("arquivo")
         file_url = None
         
+        # Upload para Supabase
         if file and file.filename != "":
             filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename}"
             upload_url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET_NAME}/{filename}"
@@ -75,6 +88,7 @@ def chat():
             if res.status_code == 200:
                 file_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET_NAME}/{filename}"
 
+        # Persistência no Banco
         if msg.strip() or file_url:
             hora_atual = (datetime.utcnow() - timedelta(hours=3)).strftime('%d/%m %H:%M')
             conn = get_db_connection()
@@ -86,6 +100,7 @@ def chat():
             conn.close()
             return redirect(url_for('chat'))
 
+    # Busca de Mensagens
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT autor, texto, data, arquivo_url FROM mensagens ORDER BY id DESC LIMIT 50")
@@ -93,6 +108,9 @@ def chat():
     cur.close()
     conn.close()
 
+    # ==========================================
+    # BLOCO 5: INTERFACE (HTML/CSS/JS)
+    # ==========================================
     resp = make_response(render_template_string("""
         <!DOCTYPE html>
         <html>
@@ -161,7 +179,6 @@ def chat():
                 let isOverlayOpen = false;
                 let isWindowFocused = true;
 
-                // Detecta quando o usuário sai da aba para escolher arquivo
                 window.onfocus = () => { isWindowFocused = true; };
                 window.onblur = () => { isWindowFocused = false; };
 
@@ -187,13 +204,6 @@ def chat():
                 setInterval(() => {
                     const hasFile = document.getElementById('arquivo').files.length > 0;
                     const hasText = document.getElementById('msgInput').value !== "";
-                    
-                    // REFRESH SÓ ACONTECE SE:
-                    // 1. O campo de texto não está focado
-                    // 2. Não há imagem aberta (overlay)
-                    // 3. Não há texto escrito
-                    // 4. Não há arquivo selecionado
-                    // 5. A JANELA ESTÁ FOCADA (Se estiver na galeria escolhendo foto, isWindowFocused será false)
                     if (document.activeElement.tagName !== 'INPUT' && !isOverlayOpen && !hasText && !hasFile && isWindowFocused) {
                         window.location.reload();
                     }
@@ -202,6 +212,8 @@ def chat():
         </body>
         </html>
     """, msgs=msgs_raw, meu_nome=meu_nome, cor_minha=cor_minha, cor_outra=cor_outra, parceiro=parceiro))
+    
+    # Headers de Cache
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
