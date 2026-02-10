@@ -1,69 +1,143 @@
-# app_blindado_teste.py
-from flask import Flask, render_template_string, request, session
+# app.py (Versão de Teste com Blindagem V5.0)
+import os
+import psycopg2
+import random
+import string
+from flask import Flask, request, render_template_string, session, redirect, url_for, make_response
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
-app.secret_key = "segredo_extremo"
+app.secret_key = os.getenv("SECRET_KEY", "teste_blindagem_2026")
 
-@app.route("/")
-def index():
-    # Simulação de mensagens para o Canvas
-    msgs = [{"id": 1, "texto": "Mensagem protegida pelo Canvas"}]
+# Configurações para o Render/Supabase
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
+
+@app.route("/", methods=["GET", "POST"])
+def login():
+    if request.method == "GET":
+        session.clear()
+        
+    id_campo = ''.join(random.choices(string.ascii_letters, k=6))
+
+    if request.method == "POST":
+        # Captura a senha independente do ID dinâmico
+        senha_digitada = next((val for key, val in request.form.items() if key.startswith('pass_')), None)
+        
+        # Simulação de senhas para o teste
+        if senha_digitada in ["123", "456"]:
+            session["senha"] = senha_digitada
+            return redirect(url_for("chat"))
+        
+        return render_template_string(HTML_LOGIN, erro="Senha incorreta.", id=id_campo)
+
+    return render_template_string(HTML_LOGIN, id=id_campo)
+
+@app.route("/chat")
+def chat():
+    if "senha" not in session:
+        return redirect(url_for("login"))
     
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-                .msg-bubble { filter: blur(10px); background: #222; color: white; padding: 10px; margin: 10px; }
-                .msg-bubble:active { filter: blur(0px); } /* Desfoca ao soltar o dedo */
-                #msgInput { width: 80%; padding: 10px; }
-            </style>
-        </head>
-        <body>
-            <div id="chat">
-                {% for m in msgs %}
-                <div class="msg-bubble">
-                    <canvas class="canvas-msg" data-text="{{ m.texto }}"></canvas>
-                </div>
-                {% endfor %}
-            </div>
+    # Mensagens de exemplo para validar Canvas e Blur
+    msgs = [
+        {"id": 1, "autor": "Ele", "texto": "Esta mensagem é um desenho no Canvas.", "hora": "12:00"},
+        {"id": 2, "autor": "Ela", "texto": "Toque e segure para desborrar.", "hora": "12:05"}
+    ]
+    return render_template_string(HTML_CHAT, msgs=msgs)
 
-            <form id="chatForm" onsubmit="enviar(event)">
-                <input type="text" id="msgInput" placeholder="Digite aqui...">
-                <button type="submit">Enviar</button>
-            </form>
+# ==========================================
+# TEMPLATES COM AS TÉCNICAS DE SEGURANÇA
+# ==========================================
 
-            <script>
-                // 1. RENDERIZA O CANVAS (Cega a Acessibilidade)
-                function render() {
-                    document.querySelectorAll('.canvas-msg').forEach(canv => {
-                        const ctx = canv.getContext('2d');
-                        canv.width = 300; canv.height = 30;
-                        ctx.fillStyle = "white"; ctx.font = "16px Arial";
-                        ctx.fillText(canv.getAttribute('data-text'), 10, 20);
-                    });
-                }
+HTML_LOGIN = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { background: #0b141a; color: white; font-family: sans-serif; text-align: center; padding-top: 50px; }
+        input { padding: 15px; border-radius: 10px; border: none; width: 80%; margin-bottom: 10px; }
+        button { padding: 15px; width: 85%; background: #00a884; border: none; color: white; font-weight: bold; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <h2>Cofre Privado</h2>
+    {% if erro %}<p style="color: red;">{{ erro }}</p>{% endif %}
+    
+    <form id="loginForm" method="POST" onsubmit="limparInput('pass_field')">
+        <input type="password" id="pass_field" name="pass_{{ id }}" placeholder="Senha" autocomplete="new-password">
+        <button type="submit">ENTRAR</button>
+    </form>
 
-                // 2. LIMPEZA AGRESSIVA (Protege contra Screen Loggers no envio)
-                function enviar(e) {
-                    e.preventDefault();
-                    const input = document.getElementById('msgInput');
-                    const textoOriginal = input.value;
+    <script>
+        function limparInput(id) {
+            const el = document.getElementById(id);
+            setTimeout(() => { el.value = ""; el.blur(); }, 10); // Limpa milissegundos após o envio
+        }
+    </script>
+</body>
+</html>
+"""
 
-                    // Limpa IMEDIATAMENTE antes de qualquer processamento
-                    input.value = ""; 
-                    input.blur(); // Tira o foco para fechar o teclado do celular rápido
-                    
-                    console.log("Enviando via AJAX/Fetch para o servidor:", textoOriginal);
-                    alert("Mensagem enviada e campo limpo instantaneamente!");
-                }
+HTML_CHAT = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+    <style>
+        body { background: #0b141a; color: white; font-family: sans-serif; }
+        /* TÉCNICA 1: CSS BLUR (Anti-Screenshot) */
+        .msg-bubble { 
+            background: #202c33; padding: 10px; margin: 10px; border-radius: 10px; 
+            filter: blur(12px); transition: 0.2s; user-select: none;
+        }
+        .msg-bubble:active { filter: blur(0px); } /* Desfoca ao soltar */
+        canvas { max-width: 100%; }
+        .footer { position: fixed; bottom: 0; width: 100%; background: #202c33; padding: 10px; }
+        #msgInput { width: 70%; padding: 10px; border-radius: 20px; border: none; }
+    </style>
+</head>
+<body>
+    <div id="chat-container">
+        {% for m in msgs %}
+        <div class="msg-bubble">
+            <canvas class="canvas-msg" data-text="{{ m.texto }}"></canvas>
+        </div>
+        {% endfor %}
+    </div>
 
-                window.onload = render;
-            </script>
-        </body>
-        </html>
-    ''', msgs=msgs)
+    <form class="footer" onsubmit="enviar(event)">
+        <input type="text" id="msgInput" placeholder="Mensagem">
+        <button type="submit" style="background: none; border: none; color: #00a884; font-size: 20px;">➔</button>
+    </form>
+
+    <script>
+        function renderCanvas() {
+            document.querySelectorAll('.canvas-msg').forEach(canv => {
+                const ctx = canv.getContext('2d');
+                const text = canv.getAttribute('data-text');
+                canv.width = 300; canv.height = 30;
+                ctx.fillStyle = "white"; ctx.font = "16px Arial";
+                ctx.fillText(text, 10, 20);
+            });
+        }
+
+        function enviar(e) {
+            e.preventDefault();
+            const input = document.getElementById('msgInput');
+            console.log("Enviando:", input.value);
+            input.value = ""; // LIMPEZA INSTANTÂNEA
+            input.blur(); // FECHA TECLADO
+            alert("Enviado e campo limpo!");
+        }
+
+        window.onload = renderCanvas;
+    </script>
+</body>
+</html>
+"""
 
 if __name__ == "__main__":
     app.run(debug=True)
