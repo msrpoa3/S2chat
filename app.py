@@ -1,83 +1,292 @@
+# ==========================================
+# BLOCO 1: IMPORTAÇÕES E CONFIGURAÇÕES INICIAIS
+# ==========================================
 import os
-from flask import Flask, render_template_string
+import psycopg2
+import requests
+import random
+import string
+from flask import Flask, request, render_template_string, session, redirect, url_for, make_response
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
 
+load_dotenv()
 app = Flask(__name__)
+app.secret_key = "cafe_com_seguranca_2026" 
+app.permanent_session_lifetime = timedelta(hours=2)
 
-@app.route("/")
-def test_anonimo():
-    return render_template_string('''
+# Variáveis de Ambiente
+SENHA_ELE = os.getenv("SENHA_ELE")
+SENHA_ELA = os.getenv("SENHA_ELA")
+DATABASE_URL = os.getenv("DATABASE_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+BUCKET_NAME = os.getenv("BUCKET_NAME")
+
+# ==========================================
+# BLOCO 2: UTILITÁRIOS E CONEXÕES
+# ==========================================
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL, connect_timeout=10)
+
+# ==========================================
+# BLOCO 3: GESTÃO DE ACESSO (LOGIN/LOGOUT)
+# ==========================================
+@app.route("/", methods=["GET", "POST"])
+def login():
+    session.clear()
+    id_campo = ''.join(random.choices(string.ascii_letters, k=6))
+
+    if request.method == "POST":
+        senha_digitada = next((val for key, val in request.form.items() if key.startswith('pass_')), None)
+        if senha_digitada in [SENHA_ELE, SENHA_ELA]:
+            session.permanent = True
+            session["senha"] = senha_digitada
+            return redirect(url_for("chat"))
+        return render_template_string(HTML_LOGIN, erro="Senha incorreta", id=id_campo)
+
+    return render_template_string(HTML_LOGIN, id=id_campo)
+
+# Template de Login Otimizado para Mobile e com Trava de Segurança
+HTML_LOGIN = """
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cofre Privado</title>
+    <style>
+        body { background: #0b141a; color: white; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; display: flex; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
+        .container { width: 90%; max-width: 400px; text-align: center; }
+        .logo { font-size: 50px; margin-bottom: 20px; }
+        
+        /* Estilo para campos grandes (Mobile First) */
+        input[type="password"] { 
+            width: 100%; padding: 20px; font-size: 22px; border-radius: 12px; border: 1px solid #2a3942; 
+            background: #2a3942; color: white; box-sizing: border-box; text-align: center; margin-bottom: 15px;
+            outline: none;
+        }
+        button { 
+            width: 100%; padding: 20px; font-size: 18px; font-weight: bold; border-radius: 12px; border: none; 
+            background: #00a884; color: white; cursor: pointer; transition: 0.3s;
+        }
+        button:active { transform: scale(0.98); opacity: 0.8; }
+        
+        /* Tela de Bloqueio */
+        #bloqueio { display: none; background: rgba(11, 20, 26, 0.95); padding: 30px; border-radius: 20px; border: 1px solid #ef5350; }
+        #bloqueio h2 { color: #ef5350; font-size: 24px; }
+        #bloqueio p { color: #8696a0; line-height: 1.5; font-size: 16px; }
+        
+        #form-login { display: none; }
+        .erro { color: #ef5350; margin-bottom: 10px; font-size: 14px; }
+        .loading { font-size: 14px; color: #8696a0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="loader" class="loading">Iniciando protocolo de segurança...</div>
+
+        <div id="bloqueio">
+            <div class="logo">🛡️</div>
+            <h2>Acesso Restrito</h2>
+            <p>Por medidas de segurança e para evitar rastros no histórico, este cofre só pode ser aberto em <b>Navegação Anônima</b>.</p>
+            <p style="font-size: 13px; margin-top: 20px;">Abra o menu do navegador e selecione "Nova guia anônima" para continuar.</p>
+        </div>
+
+        <div id="form-login">
+            <div class="logo">🔐</div>
+            <h2 style="margin-bottom: 30px;">Cofre Privado</h2>
+            {% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
+            <form method="POST" autocomplete="off">
+                <input type="password" name="pass_{{ id }}" placeholder="Senha de Acesso" autofocus inputmode="numeric" autocomplete="new-password">
+                <button type="submit">DESBLOQUEAR</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        async function verificarSeguranca() {
+            const loader = document.getElementById('loader');
+            const bloqueio = document.getElementById('bloqueio');
+            const form = document.getElementById('form-login');
+
+            if ('storage' in navigator && 'estimate' in navigator.storage) {
+                const {quota} = await navigator.storage.estimate();
+                const quotaMB = Math.round(quota / (1024 * 1024));
+                
+                loader.style.display = 'none';
+
+                // Se a quota for baixa (< 1000MB), assume-se anônimo no Mobile
+                if (quotaMB < 1000) {
+                    form.style.display = 'block';
+                } else {
+                    bloqueio.style.display = 'block';
+                }
+            } else {
+                loader.innerText = "Navegador incompatível.";
+            }
+        }
+        
+        // Pequeno delay para a API de storage responder com precisão
+        setTimeout(verificarSeguranca, 500);
+    </script>
+</body>
+</html>
+"""
+
+
+# ==========================================
+# BLOCO 4: NÚCLEO DO CHAT (LÓGICA E STORAGE)
+# ==========================================
+@app.route("/chat", methods=["GET", "POST"])
+def chat():
+    senha = session.get('senha')
+    if not senha: return redirect(url_for('login'))
+    
+    if senha == SENHA_ELE: meu_nome, cor_minha, cor_outra, parceiro = "Ele", "#005c4b", "#202c33", "Ela"
+    else: meu_nome, cor_minha, cor_outra, parceiro = "Ela", "#c2185b", "#202c33", "Ele"
+
+    if request.method == "POST":
+        msg = request.form.get("msg", "")
+        file = request.files.get("arquivo")
+        file_url = None
+        
+        # Upload para Supabase
+        if file and file.filename != "":
+            filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename}"
+            upload_url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET_NAME}/{filename}"
+            headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": file.content_type}
+            res = requests.post(upload_url, headers=headers, data=file.read())
+            if res.status_code == 200:
+                file_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET_NAME}/{filename}"
+
+        # Persistência no Banco
+        if msg.strip() or file_url:
+            hora_atual = (datetime.utcnow() - timedelta(hours=3)).strftime('%d/%m %H:%M')
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("INSERT INTO mensagens (autor, texto, data, arquivo_url) VALUES (%s, %s, %s, %s)", 
+                        (meu_nome, msg, hora_atual, file_url))
+            conn.commit()
+            cur.close()
+            conn.close()
+            return redirect(url_for('chat'))
+
+    # Busca de Mensagens
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT autor, texto, data, arquivo_url FROM mensagens ORDER BY id DESC LIMIT 50")
+    msgs_raw = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    # ==========================================
+    # BLOCO 5: INTERFACE (HTML/CSS/JS)
+    # ==========================================
+    resp = make_response(render_template_string("""
         <!DOCTYPE html>
         <html>
         <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Teste de Segurança</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
             <style>
-                body { 
-                    background: #0b141a; 
-                    color: white; 
-                    font-family: sans-serif; 
-                    display: flex; 
-                    flex-direction: column; 
-                    align-items: center; 
-                    justify-content: center; 
-                    height: 100vh; 
-                    margin: 0; 
-                }
-                #status_box { 
-                    padding: 30px; 
-                    border-radius: 15px; 
-                    text-align: center; 
-                    transition: 0.5s;
-                    width: 80%;
-                    max-width: 400px;
-                }
-                .pendente { background: #2a3942; }
-                .anonimo { background: #00a884; border: 2px solid #fff; }
-                .normal { background: #ef5350; border: 2px solid #fff; }
-                h1 { margin: 0 0 10px 0; font-size: 20px; }
-                p { margin: 5px 0; font-size: 14px; opacity: 0.8; }
+                body { font-family: 'Segoe UI', sans-serif; margin: 0; background-color: #0b141a; color: #e9edef; overflow-x: hidden; }
+                .header { background: #202c33; padding: 10px 20px; display: flex; align-items: center; position: sticky; top:0; z-index:100; justify-content: space-between; }
+                .chat-container { display: flex; flex-direction: column; padding: 10px; margin-bottom: 80px; }
+                .msg-row { display: flex; width: 100%; margin-bottom: 12px; }
+                .msg-bubble { max-width: 85%; padding: 8px 12px; border-radius: 12px; font-size: 15px; }
+                .mine { justify-content: flex-end; }
+                .mine .msg-bubble { background: {{cor_minha}}; border-top-right-radius: 0; }
+                .other { justify-content: flex-start; }
+                .other .msg-bubble { background: {{cor_outra}}; border-top-left-radius: 0; }
+                .time { font-size: 0.65em; color: rgba(255,255,255,0.4); text-align: right; margin-top: 5px; display: block; }
+                .footer { position: fixed; bottom: 0; width: 100%; background: #202c33; padding: 10px; display: flex; align-items: center; box-sizing: border-box; }
+                .input-msg { flex: 1; background: #2a3942; border: none; padding: 12px; border-radius: 25px; color: white; outline: none; margin: 0 10px; font-size: 16px; }
+                .icon-btn { color: #8696a0; font-size: 22px; cursor: pointer; }
+                .clip-active { color: #00a884 !important; }
+                .media-bar { background: #111b21; padding: 10px; overflow-x: auto; display: flex; gap: 8px; border-bottom: 1px solid #222; white-space: nowrap; }
+                .img-thumb { width: 60px; height: 60px; object-fit: cover; border-radius: 8px; flex-shrink: 0; border: 1px solid #333; }
+                #overlay { position: fixed; display: none; width: 100%; height: 100%; top: 0; left: 0; background: rgba(0,0,0,0.98); z-index: 2000; justify-content: center; align-items: center; }
+                #overlay img { max-width: 100%; max-height: 100%; }
+                #cancelFile { display: none; color: #ef5350; margin-left: 5px; font-size: 18px; }
             </style>
         </head>
-        <body>
-
-            <div id="status_box" class="pendente">
-                <h1 id="msg">Analisando Navegação...</h1>
-                <p id="detalhe">Aguardando resposta do sistema...</p>
+        <body oncontextmenu="return false;">
+            <div class="header">
+                <div style="display:flex; align-items:center;">
+                    <div style="width:35px; height:35px; background:{{cor_minha}}; border-radius:50%; margin-right:12px; display:flex; align-items:center; justify-content:center; font-weight:bold;">{{parceiro[0]}}</div>
+                    <div><span style="font-weight:bold;">{{parceiro}}</span><br><small style="color:#00a884;">online</small></div>
+                </div>
+                <a href="/sair" class="icon-btn"><i class="fa-solid fa-right-from-bracket"></i></a>
             </div>
 
-            <script>
-                async function validarAcesso() {
-                    const box = document.getElementById('status_box');
-                    const msg = document.getElementById('msg');
-                    const detalhe = document.getElementById('detalhe');
+            <div class="media-bar">
+                {% for m in msgs if m[3] %}<img src="{{m[3]}}" class="img-thumb" onclick="openImg('{{m[3]}}')">{% endfor %}
+            </div>
 
-                    if ('storage' in navigator && 'estimate' in navigator.storage) {
-                        const {quota} = await navigator.storage.estimate();
-                        const quotaMB = Math.round(quota / (1024 * 1024));
-                        
-                        // No Chrome Mobile, a quota em modo anônimo é drasticamente reduzida
-                        // O limite de 1000MB (1GB) costuma ser a linha divisória clara
-                        if (quotaMB < 1000) {
-                            box.className = "anonimo";
-                            msg.innerText = "✅ MODO ANÔNIMO DETECTADO";
-                            detalhe.innerText = "Sua cota de disco é limitada: " + quotaMB + "MB. Seguro para o Cofre.";
-                        } else {
-                            box.className = "normal";
-                            msg.innerText = "❌ NAVEGAÇÃO NORMAL";
-                            detalhe.innerText = "Cota de disco alta: " + quotaMB + "MB. Risco de histórico detectado.";
-                        }
-                    } else {
-                        msg.innerText = "⚠️ Erro de Compatibilidade";
-                        detalhe.innerText = "Seu navegador não suporta a API de detecção.";
+            <div class="chat-container" id="chat">
+                {% for m in msgs|reverse %}
+                <div class="msg-row {% if m[0] == meu_nome %}mine{% else %}other{% endif %}">
+                    <div class="msg-bubble">
+                        {% if m[1] %}<div style="word-wrap: break-word;">{{m[1]}}</div>{% endif %}
+                        {% if m[3] %}<div style="margin-top:5px; color:#00a884; font-weight:bold; cursor:pointer;" onclick="openImg('{{m[3]}}')"><i class="fa-solid fa-camera"></i> Foto</div>{% endif %}
+                        <span class="time">{{ m[2] }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div id="overlay" onclick="closeImg()"><img id="imgFull"></div>
+
+            <form method="POST" enctype="multipart/form-data" class="footer" id="mainForm">
+                <label for="arquivo" class="icon-btn" id="clipLabel"><i class="fa-solid fa-paperclip"></i></label>
+                <i class="fa-solid fa-circle-xmark" id="cancelFile" onclick="clearFile()"></i>
+                <input type="file" id="arquivo" name="arquivo" style="display:none" onchange="fileSelected()">
+                <input type="text" name="msg" id="msgInput" class="input-msg" placeholder="Mensagem" autocomplete="off">
+                <button type="submit" class="icon-btn" style="background:none; border:none;"><i class="fa-solid fa-paper-plane" style="color:#00a884;"></i></button>
+            </form>
+
+            <script>
+                window.scrollTo(0, document.body.scrollHeight);
+                let isOverlayOpen = false;
+                let isWindowFocused = true;
+
+                window.onfocus = () => { isWindowFocused = true; };
+                window.onblur = () => { isWindowFocused = false; };
+
+                function fileSelected() {
+                    const fileInput = document.getElementById('arquivo');
+                    if (fileInput.files.length > 0) {
+                        document.getElementById('clipLabel').classList.add('clip-active');
+                        document.getElementById('cancelFile').style.display = "inline";
+                        document.getElementById('msgInput').placeholder = "Foto selecionada...";
                     }
                 }
 
-                // Executa a validação após 1 segundo para garantir o carregamento
-                setTimeout(validarAcesso, 1000);
+                function clearFile() {
+                    document.getElementById('arquivo').value = "";
+                    document.getElementById('clipLabel').classList.remove('clip-active');
+                    document.getElementById('cancelFile').style.display = "none";
+                    document.getElementById('msgInput').placeholder = "Mensagem";
+                }
+
+                function openImg(src) { document.getElementById('imgFull').src = src; document.getElementById('overlay').style.display = 'flex'; isOverlayOpen = true; }
+                function closeImg() { document.getElementById('overlay').style.display = 'none'; isOverlayOpen = false; }
+
+                setInterval(() => {
+                    const hasFile = document.getElementById('arquivo').files.length > 0;
+                    const hasText = document.getElementById('msgInput').value !== "";
+                    if (document.activeElement.tagName !== 'INPUT' && !isOverlayOpen && !hasText && !hasFile && isWindowFocused) {
+                        window.location.reload();
+                    }
+                }, 10000);
             </script>
         </body>
         </html>
-    ''')
-
-if __name__ == "__main__":
-    app.run(debug=True)
+    """, msgs=msgs_raw, meu_nome=meu_nome, cor_minha=cor_minha, cor_outra=cor_outra, parceiro=parceiro))
+    
+    # Headers de Cache
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
