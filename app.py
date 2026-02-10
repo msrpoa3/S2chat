@@ -8,21 +8,21 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# Configurações do Render
+# Configurações extraídas do seu .env
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip('/')
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
 BUCKET_NAME = os.getenv("BUCKET_NAME", "").strip()
 
-def gerar_link_puro(nome_arquivo):
+def gerar_link_corrigido(nome_arquivo):
     """
-    Pede a assinatura sem qualquer manipulação de string no nome.
-    O objetivo é ver o que a API devolve exatamente.
+    Gera o link assinado e reconstrói a URL injetando o prefixo /storage/v1
+    que a API costuma omitir, causando o 'Invalid Path'.
     """
-    # Nome exatamente como vem da lista do bucket
-    nome_cru = nome_arquivo
+    # 1. Nome do arquivo como está no bucket
+    nome_puro = urllib.parse.unquote(nome_arquivo).strip()
     
-    # Endpoint de solicitação
-    url_request = f"{SUPABASE_URL}/storage/v1/object/sign/{BUCKET_NAME}/{nome_cru}"
+    # 2. Endpoint de solicitação da assinatura
+    url_request = f"{SUPABASE_URL}/storage/v1/object/sign/{BUCKET_NAME}/{nome_puro}"
     
     headers = {
         "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -30,91 +30,86 @@ def gerar_link_puro(nome_arquivo):
     }
     
     try:
-        # Pedimos validade de 1 hora
+        # Solicitamos validade de 1 hora
         res = requests.post(url_request, headers=headers, json={"expiresIn": 3600}, timeout=10)
         
         if res.status_code == 200:
-            link_relativo = res.json().get("signedURL") # Ex: /storage/v1/object/sign/...
+            link_relativo = res.json().get("signedURL") # Ex: /object/sign/arquivos/foto.jpg...
             
-            # Montagem do link final unindo o domínio ao caminho relativo
-            # O lstrip('/') garante que não haja duas barras após o domínio
-            url_final = f"{SUPABASE_URL}/{link_relativo.lstrip('/')}"
+            # A CORREÇÃO:
+            # Se a API devolver o link sem o prefixo /storage/v1, nós o adicionamos manualmente.
+            # Isso garante que a URL fique idêntica à que funciona no seu painel.
+            if not link_relativo.startswith("/storage/v1"):
+                link_corrigido = f"/storage/v1{link_relativo}"
+            else:
+                link_corrigido = link_relativo
             
-            return {"status": "✅ SUCESSO", "url": url_final, "debug": "Link gerado via API."}
+            url_final = f"{SUPABASE_URL}{link_corrigido}"
+            
+            return {"status": "✅ SUCESSO", "url": url_final}
         else:
-            return {"status": f"❌ ERRO {res.status_code}", "url": None, "debug": res.text}
+            return {"status": f"❌ ERRO {res.status_code}", "msg": res.text}
             
     except Exception as e:
-        return {"status": "❌ FALHA CRÍTICA", "url": None, "debug": str(e)}
+        return {"status": "❌ FALHA", "msg": str(e)}
 
 @app.route("/")
 def index():
-    # 1. Listar ficheiros reais do bucket
+    # Listar arquivos para teste
     list_url = f"{SUPABASE_URL}/storage/v1/object/list/{BUCKET_NAME}"
     headers = {"Authorization": f"Bearer {SUPABASE_KEY}"}
     
-    lista_resultados = []
+    resultados = []
     try:
         res_list = requests.post(list_url, headers=headers, json={"prefix": ""}, timeout=10)
         if res_list.status_code == 200:
             ficheiros = res_list.json()
-            # Testamos os últimos 3 para comparação
-            for f in ficheiros[-3:]:
+            for f in ficheiros[-5:]: # Testar os últimos 5
                 if f['name'] != ".emptyFolderPlaceholder":
-                    diag = gerar_link_puro(f['name'])
-                    lista_resultados.append({"nome": f['name'], "diag": diag})
+                    diag = gerar_link_corrigido(f['name'])
+                    resultados.append({"nome": f['name'], "diag": diag})
         else:
-            return f"Erro ao aceder ao Supabase: {res_list.text}"
+            return f"Erro Supabase List: {res_list.text}"
     except Exception as e:
-        return f"Erro de ligação: {str(e)}"
+        return f"Erro Conexão: {e}"
 
     html = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Investigação Supabase V6</title>
+        <title>Stress Test V7 - Final Path Fix</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body { font-family: monospace; background: #000; color: #0f0; padding: 20px; }
-            .box { border: 1px solid #333; padding: 15px; margin-bottom: 30px; background: #0a0a0a; }
-            .url { color: #888; font-size: 11px; word-break: break-all; background: #111; padding: 10px; display: block; margin: 10px 0; border: 1px dashed #444; }
-            img { max-width: 300px; display: block; margin-top: 10px; border: 1px solid #0f0; }
-            .label { color: yellow; font-weight: bold; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #f1f5f9; padding: 20px; }
+            .card { background: #1e293b; border: 1px solid #334155; padding: 20px; margin-bottom: 25px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+            .url-box { background: #020617; padding: 12px; font-size: 11px; word-break: break-all; color: #94a3b8; border-radius: 6px; margin: 15px 0; border: 1px solid #1e293b; }
+            img { max-width: 100%; border: 3px solid #334155; border-radius: 8px; margin-top: 10px; }
+            .success { color: #4ade80; font-weight: bold; }
+            .info { color: #38bdf8; font-size: 13px; }
         </style>
     </head>
     <body>
-        <h2>🕵️ Investigação de Links (V6)</h2>
-        <p>URL Base: {{ base }} | Bucket: {{ bucket }}</p>
-        <hr>
+        <h1>🚀 Stress Test V7: O Ajuste Final</h1>
+        <p class="info">Injetando <code>/storage/v1</code> na reconstrução da URL.</p>
+        <hr style="border-color: #334155;">
 
         {% for r in resultados %}
-        <div class="box">
-            <span class="label">Ficheiro:</span> {{ r.nome }} <br>
-            <span class="label">Status API:</span> {{ r.diag.status }} <br>
+        <div class="card">
+            <strong>Arquivo:</strong> {{ r.nome }} <br>
+            <strong>Status:</strong> <span class="success">{{ r.diag.status }}</span>
             
             {% if r.diag.url %}
-                <span class="label">Link Gerado (Copie e compare):</span>
-                <span class="url">{{ r.diag.url }}</span>
-                
-                <span class="label">Pré-visualização:</span><br>
-                <img src="{{ r.diag.url }}" alt="Erro: Path Invalid no navegador">
+                <div class="url-box">{{ r.diag.url }}</div>
+                <img src="{{ r.diag.url }}" alt="Se você vê isso, o Invalid Path foi corrigido!">
             {% else %}
-                <p style="color:red">Debug: {{ r.diag.debug }}</p>
+                <p style="color:#f87171;">Erro: {{ r.diag.msg }}</p>
             {% endif %}
         </div>
         {% endfor %}
-
-        <div style="background: #222; padding: 15px; border-radius: 5px; color: white;">
-            <strong>Como testar o "Erro Ridículo":</strong><br>
-            1. Abra o painel do Supabase e gere um link manual para o ficheiro <u>{{ resultados[0].nome if resultados else 'acima' }}</u>.<br>
-            2. Copie esse link manual.<br>
-            3. Copie o link cinzento gerado acima pelo site.<br>
-            4. Compare os dois num bloco de notas.<br>
-            5. O caminho entre o domínio e o <code>?token=</code> tem de ser exatamente igual.
-        </div>
     </body>
     </html>
     """
-    return render_template_string(html, resultados=lista_resultados, base=SUPABASE_URL, bucket=BUCKET_NAME)
+    return render_template_string(html, resultados=resultados)
 
 if __name__ == "__main__":
     app.run(debug=True)
