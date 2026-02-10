@@ -169,10 +169,13 @@ def obter_url_assinada(path_ou_url):
     if not path_ou_url:
         return None
     
-    # Extrai apenas o nome do arquivo (funciona para links novos e antigos)
+    # Extrai apenas o nome do arquivo para limpar links antigos que estão no DB
+    # Ex: de 'https://.../foto.jpg' para 'foto.jpg'
     nome_arquivo = path_ou_url.split('/')[-1]
     
-    url_request = f"{SUPABASE_URL}/storage/v1/object/sign/{BUCKET_NAME}/{nome_arquivo}"
+    # Endpoint oficial do Supabase para criar links assinados
+    url_request = f"{SUPABASE_URL.rstrip('/')}/storage/v1/object/sign/{BUCKET_NAME}/{nome_arquivo}"
+    
     headers = {
         "Authorization": f"Bearer {SUPABASE_KEY}", 
         "Content-Type": "application/json"
@@ -185,13 +188,16 @@ def obter_url_assinada(path_ou_url):
             dados = res.json()
             url_relativa = dados.get("signedURL")
             
-            # CORREÇÃO CRÍTICA: Se a URL vier relativa, anexa o domínio base
-            if url_relativa and url_relativa.startswith('/'):
-                return f"{SUPABASE_URL}{url_relativa}"
-            return url_relativa
+            if url_relativa:
+                # Se a URL vier sem o domínio (ex: /storage/v1...), nós anexamos o SUPABASE_URL
+                if url_relativa.startswith('/'):
+                    return f"{SUPABASE_URL.rstrip('/')}{url_relativa}"
+                return url_relativa
+        else:
+            print(f"Erro Supabase ({res.status_code}): {res.text}")
     except Exception as e:
-        print(f"Erro ao assinar URL: {e}")
-        return None
+        print(f"Erro crítico na assinatura: {e}")
+        
     return None
 
 @app.route("/chat", methods=["GET", "POST"])
@@ -200,7 +206,7 @@ def chat():
     if not senha: 
         return redirect(url_for('login'))
     
-    # Define perfil e cores (Mantendo sua lógica original)
+    # Define perfil e cores baseadas na senha da sessão
     if senha == SENHA_ELE:
         meu_nome, cor_minha, cor_outra, parceiro = "Ele", "#005c4b", "#202c33", "Ela"
     else:
@@ -211,20 +217,20 @@ def chat():
         file = request.files.get("arquivo")
         file_ref = None
         
-        # Processamento de Upload (Bucket Privado)
+        # Upload de arquivo para o Bucket Privado
         if file and file.filename != "":
             filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename}"
-            upload_url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET_NAME}/{filename}"
+            upload_url = f"{SUPABASE_URL.rstrip('/')}/storage/v1/object/{BUCKET_NAME}/{filename}"
             headers = {
                 "Authorization": f"Bearer {SUPABASE_KEY}", 
                 "Content-Type": file.content_type
             }
             res = requests.post(upload_url, headers=headers, data=file.read())
             if res.status_code == 200:
-                file_ref = filename # Salva apenas a referência
+                file_ref = filename # Salva apenas o nome como referência
 
         if msg.strip() or file_ref:
-            # Mantendo seu ajuste de fuso horário UTC-3
+            # Timestamp ajustado para UTC-3 (Brasília)
             hora_atual = (datetime.utcnow() - timedelta(hours=3)).strftime('%d/%m %H:%M')
             
             conn = get_db_connection()
@@ -238,7 +244,7 @@ def chat():
             conn.close()
             return redirect(url_for('chat'))
 
-    # Recuperação de Mensagens
+    # Busca as últimas 50 mensagens
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT autor, texto, data, arquivo_url FROM mensagens ORDER BY id DESC LIMIT 50")
@@ -246,14 +252,15 @@ def chat():
     cur.close()
     conn.close()
 
-    # Processamento para URLs Assinadas (Garante que o HTML receba links que funcionam)
+    # Gera URLs assinadas para cada imagem antes de enviar para o HTML
     msgs_processadas = []
     for m in msgs_raw:
         autor, texto, data, ref_arquivo = m
-        url_privada = obter_url_assinada(ref_arquivo) if ref_arquivo else None
-        msgs_processadas.append((autor, texto, data, url_privada))
+        # Se houver arquivo, tenta obter a URL privada temporária
+        url_temp = obter_url_assinada(ref_arquivo) if ref_arquivo else None
+        msgs_processadas.append((autor, texto, data, url_temp))
 
-    # Chama a interface (Bloco 5) passando as mensagens já com URLs seguras
+    # Renderiza a interface (Bloco 5)
     return renderizar_interface(msgs_processadas, meu_nome, cor_minha, cor_outra, parceiro)
 
 
