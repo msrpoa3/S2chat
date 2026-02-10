@@ -169,34 +169,38 @@ def obter_url_assinada(path_ou_url):
     if not path_ou_url:
         return None
     
-    # Extrai apenas o nome do arquivo para limpar links antigos que estão no DB
-    # Ex: de 'https://.../foto.jpg' para 'foto.jpg'
-    nome_arquivo = path_ou_url.split('/')[-1]
+    # 1. Limpeza de string para evitar erros de espaços ou barras duplas
+    base_url = SUPABASE_URL.strip().rstrip('/')
+    key = SUPABASE_KEY.strip()
+    bucket = BUCKET_NAME.strip()
     
-    # Endpoint oficial do Supabase para criar links assinados
-    url_request = f"{SUPABASE_URL.rstrip('/')}/storage/v1/object/sign/{BUCKET_NAME}/{nome_arquivo}"
+    # 2. Extrai apenas o nome do arquivo (limpa links antigos do banco)
+    nome_arquivo = path_ou_url.split('/')[-1].strip()
+    
+    # 3. Endpoint para criar URL assinada
+    url_request = f"{base_url}/storage/v1/object/sign/{bucket}/{nome_arquivo}"
     
     headers = {
-        "Authorization": f"Bearer {SUPABASE_KEY}", 
+        "Authorization": f"Bearer {key}", 
         "Content-Type": "application/json"
     }
-    payload = {"expiresIn": 3600} # Link válido por 1 hora
     
     try:
-        res = requests.post(url_request, headers=headers, json=payload)
+        # Pedido de link assinado válido por 60 minutos
+        res = requests.post(url_request, headers=headers, json={"expiresIn": 3600}, timeout=10)
+        
         if res.status_code == 200:
-            dados = res.json()
-            url_relativa = dados.get("signedURL")
-            
+            url_relativa = res.json().get("signedURL")
             if url_relativa:
-                # Se a URL vier sem o domínio (ex: /storage/v1...), nós anexamos o SUPABASE_URL
+                # Se a URL vier relativa (/storage/v1...), anexa o domínio
                 if url_relativa.startswith('/'):
-                    return f"{SUPABASE_URL.rstrip('/')}{url_relativa}"
+                    return f"{base_url}{url_relativa}"
                 return url_relativa
         else:
-            print(f"Erro Supabase ({res.status_code}): {res.text}")
+            # Esse log aparecerá no Render se o Supabase recusar a chave ou arquivo
+            print(f"⚠️ Erro Supabase {res.status_code}: {res.text} | Arq: {nome_arquivo}")
     except Exception as e:
-        print(f"Erro crítico na assinatura: {e}")
+        print(f"❌ Erro na assinatura: {e}")
         
     return None
 
@@ -219,18 +223,21 @@ def chat():
         
         # Upload de arquivo para o Bucket Privado
         if file and file.filename != "":
-            filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename}"
-            upload_url = f"{SUPABASE_URL.rstrip('/')}/storage/v1/object/{BUCKET_NAME}/{filename}"
+            # Gera nome único para evitar sobreposição
+            filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename.replace(' ', '_')}"
+            upload_url = f"{SUPABASE_URL.strip().rstrip('/')}/storage/v1/object/{BUCKET_NAME.strip()}/{filename}"
+            
             headers = {
-                "Authorization": f"Bearer {SUPABASE_KEY}", 
+                "Authorization": f"Bearer {SUPABASE_KEY.strip()}", 
                 "Content-Type": file.content_type
             }
+            
             res = requests.post(upload_url, headers=headers, data=file.read())
             if res.status_code == 200:
-                file_ref = filename # Salva apenas o nome como referência
+                file_ref = filename # Salva apenas o nome no DB
 
         if msg.strip() or file_ref:
-            # Timestamp ajustado para UTC-3 (Brasília)
+            # Horário Brasília (UTC-3)
             hora_atual = (datetime.utcnow() - timedelta(hours=3)).strftime('%d/%m %H:%M')
             
             conn = get_db_connection()
@@ -244,7 +251,7 @@ def chat():
             conn.close()
             return redirect(url_for('chat'))
 
-    # Busca as últimas 50 mensagens
+    # Recuperação do histórico
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT autor, texto, data, arquivo_url FROM mensagens ORDER BY id DESC LIMIT 50")
@@ -252,15 +259,14 @@ def chat():
     cur.close()
     conn.close()
 
-    # Gera URLs assinadas para cada imagem antes de enviar para o HTML
+    # Processamento para URLs Privadas
     msgs_processadas = []
     for m in msgs_raw:
         autor, texto, data, ref_arquivo = m
-        # Se houver arquivo, tenta obter a URL privada temporária
-        url_temp = obter_url_assinada(ref_arquivo) if ref_arquivo else None
-        msgs_processadas.append((autor, texto, data, url_temp))
+        url_segura = obter_url_assinada(ref_arquivo) if ref_arquivo else None
+        msgs_processadas.append((autor, texto, data, url_segura))
 
-    # Renderiza a interface (Bloco 5)
+    # Renderiza Bloco 5
     return renderizar_interface(msgs_processadas, meu_nome, cor_minha, cor_outra, parceiro)
 
 
