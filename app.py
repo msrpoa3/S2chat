@@ -32,22 +32,34 @@ def get_db_connection():
 # ==========================================
 # BLOCO 3: GESTÃO DE ACESSO (LOGIN/LOGOUT)
 # ==========================================
+
 @app.route("/", methods=["GET", "POST"])
 def login():
-    session.clear()
+    # Limpa a sessão ao carregar a página de login para garantir que está "limpo"
+    if request.method == "GET":
+        session.clear()
+        
     id_campo = ''.join(random.choices(string.ascii_letters, k=6))
 
     if request.method == "POST":
+        # Pega a senha independente do ID dinâmico do campo
         senha_digitada = next((val for key, val in request.form.items() if key.startswith('pass_')), None)
+        
         if senha_digitada in [SENHA_ELE, SENHA_ELA]:
             session.permanent = True
             session["senha"] = senha_digitada
             return redirect(url_for("chat"))
-        return render_template_string(HTML_LOGIN, erro="Senha incorreta", id=id_campo)
+        
+        return render_template_string(HTML_LOGIN, erro="Senha incorreta. Tente novamente.", id=id_campo)
 
     return render_template_string(HTML_LOGIN, id=id_campo)
 
-# Template de Login Otimizado para Mobile e com Trava de Segurança
+@app.route("/sair")
+def sair():
+    session.clear()
+    return redirect(url_for("login"))
+
+# Template de Login Mobile com Trava de Anonimato
 HTML_LOGIN = """
 <!DOCTYPE html>
 <html lang="pt-br">
@@ -56,30 +68,35 @@ HTML_LOGIN = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Cofre Privado</title>
     <style>
-        body { background: #0b141a; color: white; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; display: flex; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
+        body { 
+            background: #0b141a; color: white; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            margin: 0; display: flex; align-items: center; justify-content: center; 
+            height: 100vh; overflow: hidden; 
+        }
         .container { width: 90%; max-width: 400px; text-align: center; }
-        .logo { font-size: 50px; margin-bottom: 20px; }
+        .logo { font-size: 60px; margin-bottom: 20px; }
         
-        /* Estilo para campos grandes (Mobile First) */
         input[type="password"] { 
-            width: 100%; padding: 20px; font-size: 22px; border-radius: 12px; border: 1px solid #2a3942; 
-            background: #2a3942; color: white; box-sizing: border-box; text-align: center; margin-bottom: 15px;
-            outline: none;
+            width: 100%; padding: 22px; font-size: 20px; border-radius: 15px; border: 2px solid #2a3942; 
+            background: #2a3942; color: white; box-sizing: border-box; text-align: center; 
+            margin-bottom: 15px; outline: none; appearance: none;
         }
-        button { 
-            width: 100%; padding: 20px; font-size: 18px; font-weight: bold; border-radius: 12px; border: none; 
-            background: #00a884; color: white; cursor: pointer; transition: 0.3s;
-        }
-        button:active { transform: scale(0.98); opacity: 0.8; }
+        input[type="password"]:focus { border-color: #00a884; }
         
-        /* Tela de Bloqueio */
-        #bloqueio { display: none; background: rgba(11, 20, 26, 0.95); padding: 30px; border-radius: 20px; border: 1px solid #ef5350; }
-        #bloqueio h2 { color: #ef5350; font-size: 24px; }
-        #bloqueio p { color: #8696a0; line-height: 1.5; font-size: 16px; }
+        button { 
+            width: 100%; padding: 22px; font-size: 18px; font-weight: bold; border-radius: 15px; border: none; 
+            background: #00a884; color: white; cursor: pointer; transition: 0.2s;
+        }
+        button:active { transform: scale(0.96); opacity: 0.9; }
+        
+        #bloqueio { display: none; background: #111b21; padding: 40px 20px; border-radius: 25px; border: 1px solid #ef5350; }
+        #bloqueio h2 { color: #ef5350; font-size: 24px; margin-top: 0; }
+        #bloqueio p { color: #8696a0; line-height: 1.6; font-size: 16px; }
         
         #form-login { display: none; }
-        .erro { color: #ef5350; margin-bottom: 10px; font-size: 14px; }
-        .loading { font-size: 14px; color: #8696a0; }
+        .erro { color: #ef5350; background: rgba(239, 83, 80, 0.1); padding: 10px; border-radius: 8px; margin-bottom: 15px; font-size: 14px; }
+        .loading { font-size: 16px; color: #8696a0; font-style: italic; }
     </style>
 </head>
 <body>
@@ -89,17 +106,20 @@ HTML_LOGIN = """
         <div id="bloqueio">
             <div class="logo">🛡️</div>
             <h2>Acesso Restrito</h2>
-            <p>Por medidas de segurança e para evitar rastros no histórico, este cofre só pode ser aberto em <b>Navegação Anônima</b>.</p>
-            <p style="font-size: 13px; margin-top: 20px;">Abra o menu do navegador e selecione "Nova guia anônima" para continuar.</p>
+            <p>Este cofre contém informações sensíveis e não deixa rastros.</p>
+            <p>Para entrar, você <b>deve</b> usar o <b>Modo Anônimo</b> do seu navegador.</p>
+            <div style="margin-top: 30px; font-size: 12px; color: #667781; border-top: 1px solid #222; padding-top: 20px;">
+                Abra as configurações do navegador e selecione "Nova guia anônima".
+            </div>
         </div>
 
         <div id="form-login">
             <div class="logo">🔐</div>
-            <h2 style="margin-bottom: 30px;">Cofre Privado</h2>
+            <h2 style="margin-bottom: 30px; font-weight: 300;">Cofre Privado</h2>
             {% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
             <form method="POST" autocomplete="off">
-                <input type="password" name="pass_{{ id }}" placeholder="Senha de Acesso" autofocus inputmode="numeric" autocomplete="new-password">
-                <button type="submit">DESBLOQUEAR</button>
+                <input type="password" name="pass_{{ id }}" placeholder="Digite a senha" autofocus autocomplete="new-password">
+                <button type="submit">ENTRAR</button>
             </form>
         </div>
     </div>
@@ -111,24 +131,28 @@ HTML_LOGIN = """
             const form = document.getElementById('form-login');
 
             if ('storage' in navigator && 'estimate' in navigator.storage) {
-                const {quota} = await navigator.storage.estimate();
-                const quotaMB = Math.round(quota / (1024 * 1024));
-                
-                loader.style.display = 'none';
+                try {
+                    const {quota} = await navigator.storage.estimate();
+                    const quotaMB = Math.round(quota / (1024 * 1024));
+                    
+                    loader.style.display = 'none';
 
-                // Se a quota for baixa (< 1000MB), assume-se anônimo no Mobile
-                if (quotaMB < 1000) {
-                    form.style.display = 'block';
-                } else {
-                    bloqueio.style.display = 'block';
+                    // Se a quota for baixa (< 1200MB no mobile), libera o acesso
+                    if (quotaMB < 1200) {
+                        form.style.display = 'block';
+                    } else {
+                        bloqueio.style.display = 'block';
+                    }
+                } catch (e) {
+                    loader.innerText = "Erro ao validar segurança.";
                 }
             } else {
-                loader.innerText = "Navegador incompatível.";
+                loader.innerText = "Navegador não suportado.";
             }
         }
         
-        // Pequeno delay para a API de storage responder com precisão
-        setTimeout(verificarSeguranca, 500);
+        // Pequeno delay para estabilidade da API
+        setTimeout(verificarSeguranca, 600);
     </script>
 </body>
 </html>
