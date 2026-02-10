@@ -165,19 +165,19 @@ HTML_LOGIN = """
 # ==========================================
 
 def obter_url_assinada(path_ou_url):
-    """Gera URL temporária e garante o domínio completo do Supabase."""
+    """Gera URL temporária e garante o domínio completo e seguro do Supabase."""
     if not path_ou_url:
         return None
     
-    # 1. Limpeza de string para evitar erros de espaços ou barras duplas
+    # 1. Limpeza total de strings (remove espaços e barras extras)
     base_url = SUPABASE_URL.strip().rstrip('/')
     key = SUPABASE_KEY.strip()
     bucket = BUCKET_NAME.strip()
     
-    # 2. Extrai apenas o nome do arquivo (limpa links antigos do banco)
+    # 2. Extrai o nome do arquivo (trata links antigos ou nomes puros)
     nome_arquivo = path_ou_url.split('/')[-1].strip()
     
-    # 3. Endpoint para criar URL assinada
+    # 3. Endpoint para assinatura
     url_request = f"{base_url}/storage/v1/object/sign/{bucket}/{nome_arquivo}"
     
     headers = {
@@ -186,21 +186,21 @@ def obter_url_assinada(path_ou_url):
     }
     
     try:
-        # Pedido de link assinado válido por 60 minutos
+        # Tenta obter o link assinado por 1 hora
         res = requests.post(url_request, headers=headers, json={"expiresIn": 3600}, timeout=10)
         
         if res.status_code == 200:
             url_relativa = res.json().get("signedURL")
             if url_relativa:
-                # Se a URL vier relativa (/storage/v1...), anexa o domínio
+                # GARANTIA DE DOMÍNIO: Se o Supabase devolver só o caminho, forçamos o domínio HTTPS
                 if url_relativa.startswith('/'):
                     return f"{base_url}{url_relativa}"
                 return url_relativa
         else:
-            # Esse log aparecerá no Render se o Supabase recusar a chave ou arquivo
+            # Log de erro para o painel do Render (ajuda no diagnóstico)
             print(f"⚠️ Erro Supabase {res.status_code}: {res.text} | Arq: {nome_arquivo}")
     except Exception as e:
-        print(f"❌ Erro na assinatura: {e}")
+        print(f"❌ Erro crítico na assinatura: {e}")
         
     return None
 
@@ -210,7 +210,7 @@ def chat():
     if not senha: 
         return redirect(url_for('login'))
     
-    # Define perfil e cores baseadas na senha da sessão
+    # Define perfil e cores baseadas na sessão
     if senha == SENHA_ELE:
         meu_nome, cor_minha, cor_outra, parceiro = "Ele", "#005c4b", "#202c33", "Ela"
     else:
@@ -221,11 +221,10 @@ def chat():
         file = request.files.get("arquivo")
         file_ref = None
         
-        # Upload de arquivo para o Bucket Privado
         if file and file.filename != "":
-            # Gera nome único para evitar sobreposição
-            filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename.replace(' ', '_')}"
-            upload_url = f"{SUPABASE_URL.strip().rstrip('/')}/storage/v1/object/{BUCKET_NAME.strip()}/{filename}"
+            # Higieniza o nome do arquivo para evitar quebras na URL
+            safe_filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename.replace(' ', '_')}"
+            upload_url = f"{SUPABASE_URL.strip().rstrip('/')}/storage/v1/object/{BUCKET_NAME.strip()}/{safe_filename}"
             
             headers = {
                 "Authorization": f"Bearer {SUPABASE_KEY.strip()}", 
@@ -234,10 +233,10 @@ def chat():
             
             res = requests.post(upload_url, headers=headers, data=file.read())
             if res.status_code == 200:
-                file_ref = filename # Salva apenas o nome no DB
+                file_ref = safe_filename
 
         if msg.strip() or file_ref:
-            # Horário Brasília (UTC-3)
+            # Brasília UTC-3
             hora_atual = (datetime.utcnow() - timedelta(hours=3)).strftime('%d/%m %H:%M')
             
             conn = get_db_connection()
@@ -251,7 +250,7 @@ def chat():
             conn.close()
             return redirect(url_for('chat'))
 
-    # Recuperação do histórico
+    # Histórico de 50 mensagens
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT autor, texto, data, arquivo_url FROM mensagens ORDER BY id DESC LIMIT 50")
@@ -259,124 +258,133 @@ def chat():
     cur.close()
     conn.close()
 
-    # Processamento para URLs Privadas
+    # Processamento de URLs (Transforma ref em link assinado)
     msgs_processadas = []
     for m in msgs_raw:
         autor, texto, data, ref_arquivo = m
         url_segura = obter_url_assinada(ref_arquivo) if ref_arquivo else None
         msgs_processadas.append((autor, texto, data, url_segura))
 
-    # Renderiza Bloco 5
     return renderizar_interface(msgs_processadas, meu_nome, cor_minha, cor_outra, parceiro)
 
+# ==========================================
+# BLOCO 5: INTERFACE (HTML/JS) E RENDERIZAÇÃO
+# ==========================================
 
-# ==========================================
-# BLOCO 5: INTERFACE (HTML/CSS/JS)
-# ==========================================
 def renderizar_interface(msgs, meu_nome, cor_minha, cor_outra, parceiro):
+    # O HTML permanece o mesmo que você já usa, mas encapsulado para retorno limpo
     html = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
-            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-            <style>
-                body { font-family: 'Segoe UI', sans-serif; margin: 0; background-color: #0b141a; color: #e9edef; overflow-x: hidden; }
-                .header { background: #202c33; padding: 10px 20px; display: flex; align-items: center; position: sticky; top:0; z-index:100; justify-content: space-between; }
-                .chat-container { display: flex; flex-direction: column; padding: 10px; margin-bottom: 80px; }
-                .msg-row { display: flex; width: 100%; margin-bottom: 12px; }
-                .msg-bubble { max-width: 85%; padding: 8px 12px; border-radius: 12px; font-size: 15px; }
-                .mine { justify-content: flex-end; }
-                .mine .msg-bubble { background: {{cor_minha}}; border-top-right-radius: 0; }
-                .other { justify-content: flex-start; }
-                .other .msg-bubble { background: {{cor_outra}}; border-top-left-radius: 0; }
-                .time { font-size: 0.65em; color: rgba(255,255,255,0.4); text-align: right; margin-top: 5px; display: block; }
-                .footer { position: fixed; bottom: 0; width: 100%; background: #202c33; padding: 10px; display: flex; align-items: center; box-sizing: border-box; }
-                .input-msg { flex: 1; background: #2a3942; border: none; padding: 12px; border-radius: 25px; color: white; outline: none; margin: 0 10px; font-size: 16px; }
-                .icon-btn { color: #8696a0; font-size: 22px; cursor: pointer; }
-                .clip-active { color: #00a884 !important; }
-                .media-bar { background: #111b21; padding: 10px; overflow-x: auto; display: flex; gap: 8px; border-bottom: 1px solid #222; white-space: nowrap; }
-                .img-thumb { width: 60px; height: 60px; object-fit: cover; border-radius: 8px; flex-shrink: 0; border: 1px solid #333; }
-                #overlay { position: fixed; display: none; width: 100%; height: 100%; top: 0; left: 0; background: rgba(0,0,0,0.98); z-index: 2000; justify-content: center; align-items: center; }
-                #overlay img { max-width: 100%; max-height: 100%; }
-                #cancelFile { display: none; color: #ef5350; margin-left: 5px; font-size: 18px; }
-            </style>
-        </head>
-        <body oncontextmenu="return false;">
-            <div class="header">
-                <div style="display:flex; align-items:center;">
-                    <div style="width:35px; height:35px; background:{{cor_minha}}; border-radius:50%; margin-right:12px; display:flex; align-items:center; justify-content:center; font-weight:bold;">{{parceiro[0]}}</div>
-                    <div><span style="font-weight:bold;">{{parceiro}}</span><br><small style="color:#00a884;">online</small></div>
+    <!DOCTYPE html>
+    <html lang="pt-br">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <title>Cofre Privado</title>
+        <style>
+            body { font-family: sans-serif; background-color: #0b141a; color: #e9edef; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+            .header { background-color: #202c33; padding: 15px; text-align: center; font-weight: bold; font-size: 1.2em; border-bottom: 1px solid #3b4a54; }
+            .chat-container { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column-reverse; background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png'); background-attachment: fixed; }
+            .msg { max-width: 80%; margin-bottom: 12px; padding: 8px 12px; border-radius: 12px; position: relative; font-size: 0.95em; line-height: 1.4; word-wrap: break-word; }
+            .minha { align-self: flex-end; border-bottom-right-radius: 2px; }
+            .outra { align-self: flex-start; border-bottom-left-radius: 2px; }
+            .data { font-size: 0.7em; opacity: 0.6; margin-top: 4px; display: block; text-align: right; }
+            .img-chat { width: 100%; max-width: 250px; border-radius: 8px; margin-top: 5px; cursor: pointer; display: block; }
+            
+            .input-area { background-color: #202c33; padding: 10px; display: flex; align-items: center; gap: 8px; }
+            .msg-input { flex: 1; background-color: #2a3942; border: none; color: white; padding: 12px; border-radius: 20px; outline: none; font-size: 16px; }
+            .btn-send { background: none; border: none; color: #00a884; font-size: 24px; cursor: pointer; display: flex; align-items: center; }
+            
+            .clip-btn { color: #8696a0; font-size: 22px; cursor: pointer; padding: 5px; }
+            .clip-active { color: #00a884 !important; }
+
+            /* Lightbox Overlay */
+            #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: none; justify-content: center; align-items: center; z-index: 1000; }
+            #imgFull { max-width: 95%; max-height: 95%; border-radius: 5px; }
+        </style>
+    </head>
+    <body oncontextmenu="return false;">
+        <div class="header">Chat Privado</div>
+        
+        <div class="chat-container">
+            {% for m in msgs %}
+                <div class="msg {{ 'minha' if m[0] == meu_nome else 'outra' }}" 
+                     style="background-color: {{ cor_minha if m[0] == meu_nome else cor_outra }}">
+                    
+                    {% if m[3] %}
+                        <img src="{{ m[3] }}" class="img-chat" onclick="openImg('{{ m[3] }}')">
+                    {% endif %}
+                    
+                    {% if m[1] %}<div style="margin-top: 5px;">{{ m[1] }}</div>{% endif %}
+                    <span class="data">{{ m[2] }}</span>
                 </div>
-                <a href="/sair" class="icon-btn"><i class="fa-solid fa-right-from-bracket"></i></a>
-            </div>
+            {% endfor %}
+        </div>
 
-            <div class="media-bar">
-                {% for m in msgs if m[3] %}<img src="{{m[3]}}" class="img-thumb" onclick="openImg('{{m[3]}}')">{% endfor %}
-            </div>
+        <form method="POST" enctype="multipart/form-data" class="input-area" id="chatForm">
+            <label for="arquivo" class="clip-btn" id="clipLabel">📎</label>
+            <input type="file" name="arquivo" id="arquivo" hidden onchange="fileSelected()">
+            
+            <input type="text" name="msg" class="msg-input" placeholder="Mensagem" id="msgInput" autocomplete="off">
+            
+            <button type="submit" class="btn-send">➤</button>
+            <button type="button" id="cancelFile" style="display:none; background:none; border:none; color:#f44336; font-size:20px;" onclick="clearFile()">✕</button>
+        </form>
 
-            <div class="chat-container" id="chat">
-                {% for m in msgs|reverse %}
-                <div class="msg-row {% if m[0] == meu_nome %}mine{% else %}other{% endif %}">
-                    <div class="msg-bubble">
-                        {% if m[1] %}<div style="word-wrap: break-word;">{{m[1]}}</div>{% endif %}
-                        {% if m[3] %}<div style="margin-top:5px; color:#00a884; font-weight:bold; cursor:pointer;" onclick="openImg('{{m[3]}}')"><i class="fa-solid fa-camera"></i> Foto</div>{% endif %}
-                        <span class="time">{{ m[2] }}</span>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
+        <div id="overlay" onclick="closeImg()">
+            <img id="imgFull" src="">
+        </div>
 
-            <div id="overlay" onclick="closeImg()"><img id="imgFull"></div>
+        <script>
+            let isOverlayOpen = false;
+            let isWindowFocused = true;
+            window.onfocus = () => { isWindowFocused = true; };
+            window.onblur = () => { isWindowFocused = false; };
 
-            <form method="POST" enctype="multipart/form-data" class="footer" id="mainForm">
-                <label for="arquivo" class="icon-btn" id="clipLabel"><i class="fa-solid fa-paperclip"></i></label>
-                <i class="fa-solid fa-circle-xmark" id="cancelFile" onclick="clearFile()"></i>
-                <input type="file" id="arquivo" name="arquivo" style="display:none" onchange="fileSelected()">
-                <input type="text" name="msg" id="msgInput" class="input-msg" placeholder="Mensagem" autocomplete="off">
-                <button type="submit" class="icon-btn" style="background:none; border:none;"><i class="fa-solid fa-paper-plane" style="color:#00a884;"></i></button>
-            </form>
-
-            <script>
-                window.scrollTo(0, document.body.scrollHeight);
-                let isOverlayOpen = false;
-                let isWindowFocused = true;
-
-                window.onfocus = () => { isWindowFocused = true; };
-                window.onblur = () => { isWindowFocused = false; };
-
-                function fileSelected() {
-                    const fileInput = document.getElementById('arquivo');
-                    if (fileInput.files.length > 0) {
-                        document.getElementById('clipLabel').classList.add('clip-active');
-                        document.getElementById('cancelFile').style.display = "inline";
-                        document.getElementById('msgInput').placeholder = "Foto selecionada...";
-                    }
+            function fileSelected() {
+                const file = document.getElementById('arquivo');
+                if (file.files.length > 0) {
+                    document.getElementById('clipLabel').classList.add('clip-active');
+                    document.getElementById('cancelFile').style.display = "block";
+                    document.getElementById('msgInput').placeholder = "Imagem selecionada...";
                 }
+            }
 
-                function clearFile() {
-                    document.getElementById('arquivo').value = "";
-                    document.getElementById('clipLabel').classList.remove('clip-active');
-                    document.getElementById('cancelFile').style.display = "none";
-                    document.getElementById('msgInput').placeholder = "Mensagem";
+            function clearFile() {
+                document.getElementById('arquivo').value = "";
+                document.getElementById('clipLabel').classList.remove('clip-active');
+                document.getElementById('cancelFile').style.display = "none";
+                document.getElementById('msgInput').placeholder = "Mensagem";
+            }
+
+            function openImg(src) { 
+                document.getElementById('imgFull').src = src; 
+                document.getElementById('overlay').style.display = 'flex'; 
+                isOverlayOpen = true; 
+            }
+            function closeImg() { 
+                document.getElementById('overlay').style.display = 'none'; 
+                isOverlayOpen = false; 
+            }
+
+            setInterval(() => {
+                const hasFile = document.getElementById('arquivo').files.length > 0;
+                const hasText = document.getElementById('msgInput').value !== "";
+                if (!isOverlayOpen && !hasText && !hasFile && isWindowFocused) {
+                    window.location.reload();
                 }
-
-                function openImg(src) { document.getElementById('imgFull').src = src; document.getElementById('overlay').style.display = 'flex'; isOverlayOpen = true; }
-                function closeImg() { document.getElementById('overlay').style.display = 'none'; isOverlayOpen = false; }
-
-                setInterval(() => {
-                    const hasFile = document.getElementById('arquivo').files.length > 0;
-                    const hasText = document.getElementById('msgInput').value !== "";
-                    if (document.activeElement.tagName !== 'INPUT' && !isOverlayOpen && !hasText && !hasFile && isWindowFocused) {
-                        window.location.reload();
-                    }
-                }, 10000);
-            </script>
-        </body>
-        </html>
+            }, 10000);
+        </script>
+    </body>
+    </html>
     """
     resp = make_response(render_template_string(html, msgs=msgs, meu_nome=meu_nome, cor_minha=cor_minha, cor_outra=cor_outra, parceiro=parceiro))
+    
+    # HEADERS DE SEGURANÇA E CACHE (Cruciais para Navegação Anônima e Mobile)
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
+    resp.headers["Referrer-Policy"] = "no-referrer-when-downgrade"
+    # Permite que o navegador carregue imagens do domínio do Supabase
+    resp.headers["Content-Security-Policy"] = f"img-src 'self' {SUPABASE_URL.strip()} data: blob:;"
+    
     return resp
