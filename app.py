@@ -7,14 +7,13 @@ import requests
 import random
 import string
 import re
-import urllib.parse  # Importação explícita adicionada aqui
+import urllib.parse
 from flask import Flask, request, render_template_string, session, redirect, url_for, make_response
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
 app = Flask(__name__)
-# Chave de segurança para as sessões
 app.secret_key = os.getenv("SECRET_KEY", "cafe_com_seguranca_2026") 
 app.permanent_session_lifetime = timedelta(hours=2)
 
@@ -174,27 +173,20 @@ def obter_url_assinada(path_ou_url):
     if not path_ou_url:
         return None
     
-    # Extrai o nome e decodifica caracteres especiais
     nome_arquivo = path_ou_url.split('/')[-1].strip()
     nome_limpo = urllib.parse.unquote(nome_arquivo)
     
     url_request = f"{SUPABASE_URL}/storage/v1/object/sign/{BUCKET_NAME}/{nome_limpo}"
-    headers = {
-        "Authorization": f"Bearer {SUPABASE_KEY}", 
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
     
     try:
         res = requests.post(url_request, headers=headers, json={"expiresIn": 3600}, timeout=10)
         if res.status_code == 200:
             link_relativo = res.json().get("signedURL")
-            
-            # Ajuste de prefixo (conforme Stress Test V7)
             if link_relativo and not link_relativo.startswith("/storage/v1"):
                 link_corrigido = f"/storage/v1{link_relativo}"
             else:
                 link_corrigido = link_relativo
-                
             return f"{SUPABASE_URL}{link_corrigido}"
     except Exception as e:
         print(f"Erro na assinatura: {e}")
@@ -214,13 +206,10 @@ def chat():
         file_ref = None
         
         if file and file.filename != "":
-            # Limpeza rigorosa do nome do arquivo
             nome_limpo = re.sub(r'[^a-zA-Z0-9._-]', '', file.filename.replace(" ", "_"))
             filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{nome_limpo}"
-            
             upload_url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET_NAME}/{filename}"
             headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": file.content_type}
-            
             res = requests.post(upload_url, headers=headers, data=file.read())
             if res.status_code == 200:
                 file_ref = filename
@@ -236,9 +225,9 @@ def chat():
             conn.close()
             return redirect(url_for('chat'))
 
-    # Histórico de Mensagens
     conn = get_db_connection()
     cur = conn.cursor()
+    # Pega as últimas 50, mas a ordem aqui vem da mais nova para a mais antiga
     cur.execute("SELECT autor, texto, data, arquivo_url FROM mensagens ORDER BY id DESC LIMIT 50")
     msgs_raw = cur.fetchall()
     cur.close()
@@ -249,10 +238,14 @@ def chat():
         autor, texto, data, ref_arquivo = m
         url_segura = obter_url_assinada(ref_arquivo) if ref_arquivo else None
         msgs_processadas.append((autor, texto, data, url_segura))
+    
+    # INVERSÃO AQUI: Reverte a lista para que a mais antiga fique no topo e a mais nova no fundo
+    msgs_processadas = msgs_processadas[::-1]
 
-    # ==========================================
-    # BLOCO 5: INTERFACE (HTML/CSS/JS)
-    # ==========================================
+    return renderizar_interface(msgs_processadas, meu_nome, cor_minha, cor_outra, parceiro)
+
+
+def renderizar_interface(msgs_processadas, meu_nome, cor_minha, cor_outra, parceiro):
     resp = make_response(render_template_string("""
         <!DOCTYPE html>
         <html>
