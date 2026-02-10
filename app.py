@@ -165,59 +165,80 @@ HTML_LOGIN = """
 # ==========================================
 
 def obter_url_assinada(path_ou_url):
-    """Converte links antigos ou nomes de arquivos em URLs privadas temporárias."""
+    """Gera URL temporária e garante o domínio completo do Supabase."""
     if not path_ou_url:
         return None
     
-    # Extrai apenas o nome do arquivo se for um link antigo (legado)
+    # Extrai apenas o nome do arquivo (funciona para links novos e antigos)
     nome_arquivo = path_ou_url.split('/')[-1]
     
     url_request = f"{SUPABASE_URL}/storage/v1/object/sign/{BUCKET_NAME}/{nome_arquivo}"
-    headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {SUPABASE_KEY}", 
+        "Content-Type": "application/json"
+    }
     payload = {"expiresIn": 3600} # Link válido por 1 hora
     
     try:
         res = requests.post(url_request, headers=headers, json=payload)
         if res.status_code == 200:
-            return res.json().get("signedURL")
-    except:
+            dados = res.json()
+            url_relativa = dados.get("signedURL")
+            
+            # CORREÇÃO CRÍTICA: Se a URL vier relativa, anexa o domínio base
+            if url_relativa and url_relativa.startswith('/'):
+                return f"{SUPABASE_URL}{url_relativa}"
+            return url_relativa
+    except Exception as e:
+        print(f"Erro ao assinar URL: {e}")
         return None
     return None
 
 @app.route("/chat", methods=["GET", "POST"])
 def chat():
     senha = session.get('senha')
-    if not senha: return redirect(url_for('login'))
+    if not senha: 
+        return redirect(url_for('login'))
     
-    if senha == SENHA_ELE: meu_nome, cor_minha, cor_outra, parceiro = "Ele", "#005c4b", "#202c33", "Ela"
-    else: meu_nome, cor_minha, cor_outra, parceiro = "Ela", "#c2185b", "#202c33", "Ele"
+    # Define perfil e cores (Mantendo sua lógica original)
+    if senha == SENHA_ELE:
+        meu_nome, cor_minha, cor_outra, parceiro = "Ele", "#005c4b", "#202c33", "Ela"
+    else:
+        meu_nome, cor_minha, cor_outra, parceiro = "Ela", "#c2185b", "#202c33", "Ele"
 
     if request.method == "POST":
         msg = request.form.get("msg", "")
         file = request.files.get("arquivo")
-        file_ref = None # Guardaremos apenas a referência/nome
+        file_ref = None
         
+        # Processamento de Upload (Bucket Privado)
         if file and file.filename != "":
             filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename}"
             upload_url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET_NAME}/{filename}"
-            headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": file.content_type}
+            headers = {
+                "Authorization": f"Bearer {SUPABASE_KEY}", 
+                "Content-Type": file.content_type
+            }
             res = requests.post(upload_url, headers=headers, data=file.read())
             if res.status_code == 200:
-                file_ref = filename # Salva apenas o nome para o Bucket Privado
+                file_ref = filename # Salva apenas a referência
 
         if msg.strip() or file_ref:
+            # Mantendo seu ajuste de fuso horário UTC-3
             hora_atual = (datetime.utcnow() - timedelta(hours=3)).strftime('%d/%m %H:%M')
+            
             conn = get_db_connection()
             cur = conn.cursor()
-            # Mantendo a coluna arquivo_url por compatibilidade, mas salvando o nome
-            cur.execute("INSERT INTO mensagens (autor, texto, data, arquivo_url) VALUES (%s, %s, %s, %s)", 
-                        (meu_nome, msg, hora_atual, file_ref))
+            cur.execute(
+                "INSERT INTO mensagens (autor, texto, data, arquivo_url) VALUES (%s, %s, %s, %s)", 
+                (meu_nome, msg, hora_atual, file_ref)
+            )
             conn.commit()
             cur.close()
             conn.close()
             return redirect(url_for('chat'))
 
-    # Busca de Mensagens e conversão para URLs assinadas
+    # Recuperação de Mensagens
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT autor, texto, data, arquivo_url FROM mensagens ORDER BY id DESC LIMIT 50")
@@ -225,14 +246,16 @@ def chat():
     cur.close()
     conn.close()
 
-    # Processa as URLs para ficarem privadas antes de ir para o HTML
-    msgs_privadas = []
+    # Processamento para URLs Assinadas (Garante que o HTML receba links que funcionam)
+    msgs_processadas = []
     for m in msgs_raw:
         autor, texto, data, ref_arquivo = m
-        url_temp = obter_url_assinada(ref_arquivo) if ref_arquivo else None
-        msgs_privadas.append((autor, texto, data, url_temp))
+        url_privada = obter_url_assinada(ref_arquivo) if ref_arquivo else None
+        msgs_processadas.append((autor, texto, data, url_privada))
 
-    return renderizar_interface(msgs_privadas, meu_nome, cor_minha, cor_outra, parceiro)
+    # Chama a interface (Bloco 5) passando as mensagens já com URLs seguras
+    return renderizar_interface(msgs_processadas, meu_nome, cor_minha, cor_outra, parceiro)
+
 
 # ==========================================
 # BLOCO 5: INTERFACE (HTML/CSS/JS)
