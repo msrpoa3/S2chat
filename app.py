@@ -6,23 +6,28 @@ import psycopg2
 import requests
 import random
 import string
-import re  # Novo: Para tratar links legados
+import re
+import urllib.parse  # Importação explícita adicionada aqui
 from flask import Flask, request, render_template_string, session, redirect, url_for, make_response
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
 app = Flask(__name__)
-app.secret_key = "cafe_com_seguranca_2026" 
+# Chave de segurança para as sessões
+app.secret_key = os.getenv("SECRET_KEY", "cafe_com_seguranca_2026") 
 app.permanent_session_lifetime = timedelta(hours=2)
 
 # Variáveis de Ambiente
 SENHA_ELE = os.getenv("SENHA_ELE")
 SENHA_ELA = os.getenv("SENHA_ELA")
 DATABASE_URL = os.getenv("DATABASE_URL")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip('/')
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 BUCKET_NAME = os.getenv("BUCKET_NAME")
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL, connect_timeout=10)
 
 # ==========================================
 # BLOCO 2: UTILITÁRIOS E CONEXÕES
@@ -165,27 +170,31 @@ HTML_LOGIN = """
 # ==========================================
 
 def obter_url_assinada(path_ou_url):
-    """Gera URL temporária corrigindo o prefixo /storage/v1 para evitar 'Invalid Path'."""
+    """Gera URL temporária corrigindo o prefixo /storage/v1."""
     if not path_ou_url:
         return None
     
-    # Extrai apenas o nome do arquivo se vier o caminho completo
+    # Extrai o nome e decodifica caracteres especiais
     nome_arquivo = path_ou_url.split('/')[-1].strip()
-    # Garante que o nome está decodificado para o pedido da API
     nome_limpo = urllib.parse.unquote(nome_arquivo)
     
     url_request = f"{SUPABASE_URL}/storage/v1/object/sign/{BUCKET_NAME}/{nome_limpo}"
-    headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {SUPABASE_KEY}", 
+        "Content-Type": "application/json"
+    }
     
     try:
         res = requests.post(url_request, headers=headers, json={"expiresIn": 3600}, timeout=10)
         if res.status_code == 200:
             link_relativo = res.json().get("signedURL")
-            # Correção crucial do prefixo identificada no Stress Test V7
-            if not link_relativo.startswith("/storage/v1"):
+            
+            # Ajuste de prefixo (conforme Stress Test V7)
+            if link_relativo and not link_relativo.startswith("/storage/v1"):
                 link_corrigido = f"/storage/v1{link_relativo}"
             else:
                 link_corrigido = link_relativo
+                
             return f"{SUPABASE_URL}{link_corrigido}"
     except Exception as e:
         print(f"Erro na assinatura: {e}")
@@ -205,15 +214,16 @@ def chat():
         file_ref = None
         
         if file and file.filename != "":
-            # Limpeza de caracteres especiais para evitar quebra de URL
+            # Limpeza rigorosa do nome do arquivo
             nome_limpo = re.sub(r'[^a-zA-Z0-9._-]', '', file.filename.replace(" ", "_"))
             filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{nome_limpo}"
             
             upload_url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET_NAME}/{filename}"
             headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": file.content_type}
+            
             res = requests.post(upload_url, headers=headers, data=file.read())
             if res.status_code == 200:
-                file_ref = filename # Salva apenas a referência/nome no DB
+                file_ref = filename
 
         if msg.strip() or file_ref:
             hora_atual = (datetime.utcnow() - timedelta(hours=3)).strftime('%d/%m %H:%M')
@@ -226,7 +236,7 @@ def chat():
             conn.close()
             return redirect(url_for('chat'))
 
-    # Busca de Mensagens
+    # Histórico de Mensagens
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT autor, texto, data, arquivo_url FROM mensagens ORDER BY id DESC LIMIT 50")
@@ -234,7 +244,6 @@ def chat():
     cur.close()
     conn.close()
 
-    # Processa URLs assinadas para cada mensagem antes de renderizar
     msgs_processadas = []
     for m in msgs_raw:
         autor, texto, data, ref_arquivo = m
