@@ -1,116 +1,94 @@
 import os
 import requests
-from flask import Flask, request, render_template_string, redirect, url_for
+import urllib.parse
+from flask import Flask, request, render_template_string
 from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = "teste_stress_supabase"
 
-# Variáveis de Ambiente (Mantenha as mesmas no Render)
+# Configurações do Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL").strip().rstrip('/')
 SUPABASE_KEY = os.getenv("SUPABASE_KEY").strip()
 BUCKET_NAME = os.getenv("BUCKET_NAME").strip()
 
-def obter_link_direto(nome_arquivo):
-    """Solicita URL assinada pura ao Supabase."""
-    url = f"{SUPABASE_URL}/storage/v1/object/sign/{BUCKET_NAME}/{nome_arquivo}"
-    headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
+def testar_assinatura(nome_arquivo):
+    """Tenta gerar a URL e valida se o Supabase responde 200."""
+    # 1. Decodifica o nome para garantir que o Supabase entenda (ex: %20 vira espaço)
+    nome_puro = urllib.parse.unquote(nome_arquivo)
+    
+    url_request = f"{SUPABASE_URL}/storage/v1/object/sign/{BUCKET_NAME}/{nome_puro}"
+    headers = {
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
     
     try:
-        res = requests.post(url, headers=headers, json={"expiresIn": 600})
+        res = requests.post(url_request, headers=headers, json={"expiresIn": 600}, timeout=10)
         if res.status_code == 200:
-            link_relativo = res.json().get("signedURL")
-            # Garante que o link seja absoluto para o navegador não se perder
-            return f"{SUPABASE_URL}{link_relativo}"
-        return f"Erro Supabase: {res.status_code} - {res.text}"
+            dados = res.json()
+            url_relativa = dados.get("signedURL")
+            # RECONSTRUÇÃO: Forçamos o domínio HTTPS para o navegador não se perder
+            return {"status": "✅ OK", "url": f"{SUPABASE_URL}{url_relativa}"}
+        else:
+            return {"status": f"❌ ERRO {res.status_code}", "msg": res.text}
     except Exception as e:
-        return f"Erro de Conexão: {str(e)}"
+        return {"status": "❌ FALHA CONEXÃO", "msg": str(e)}
 
-@app.route("/", methods=["GET", "POST"])
+@app.route("/")
 def index():
-    log_upload = ""
-    
-    # Lógica de Upload
-    if request.method == "POST":
-        file = request.files.get("foto")
-        if file:
-            filename = f"teste_{datetime.now().strftime('%H%M%S')}_{file.filename}"
-            upload_url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET_NAME}/{filename}"
-            headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": file.content_type}
-            
-            res = requests.post(upload_url, headers=headers, data=file.read())
-            if res.status_code == 200:
-                log_upload = f"✅ Sucesso: {filename} enviado!"
-            else:
-                log_upload = f"❌ Falha: {res.status_code} - {res.text}"
-
-    # Lógica de Listagem (Para testar se a chave lê o bucket)
+    # Tenta listar os arquivos para ver se a chave service_role está funcionando
     list_url = f"{SUPABASE_URL}/storage/v1/object/list/{BUCKET_NAME}"
     headers = {"Authorization": f"Bearer {SUPABASE_KEY}"}
     res_list = requests.post(list_url, headers=headers, json={"prefix": ""})
     
-    arquivos_links = []
+    resultados = []
     if res_list.status_code == 200:
         for item in res_list.json():
             nome = item['name']
             if nome != ".emptyFolderPlaceholder":
-                link = obter_link_direto(nome)
-                arquivos_links.append({"nome": nome, "url": link})
-
-    # Interface Ultra Simples
+                info = testar_assinatura(nome)
+                resultados.append({"nome": nome, "info": info})
+    
     html = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>TESTE DE STRESS SUPABASE</title>
+        <title>Diagnóstico de Storage</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body { font-family: sans-serif; padding: 20px; background: #f0f0f0; }
-            .card { background: white; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #ccc; }
-            img { max-width: 100%; border: 2px solid red; margin-top: 10px; }
-            .debug { font-size: 10px; color: gray; word-break: break-all; }
+            body { font-family: monospace; background: #121212; color: #00ff00; padding: 20px; }
+            .card { border: 1px solid #333; padding: 15px; margin-bottom: 20px; background: #1e1e1e; }
+            .url { color: #888; font-size: 11px; word-break: break-all; background: #000; padding: 5px; display: block; margin: 10px 0; }
+            img { max-width: 200px; border: 1px solid #00ff00; display: block; margin-top: 10px; }
+            .erro { color: #ff4444; }
         </style>
     </head>
     <body>
-        <h1>Stress Test: Storage</h1>
-        <p>URL: {{ url_base }} | Bucket: {{ bucket }}</p>
-        
-        <div class="card">
-            <h3>1. Testar Upload</h3>
-            <form method="POST" enctype="multipart/form-data">
-                <input type="file" name="foto">
-                <button type="submit">Enviar Foto</button>
-            </form>
-            <p>{{ log_upload }}</p>
-        </div>
+        <h1>Supabase Stress Test V2</h1>
+        <p>Bucket: {{ bucket }}</p>
 
+        {% for item in resultados %}
         <div class="card">
-            <h3>2. Arquivos no Bucket (Com links assinados)</h3>
-            {% for arq in lista %}
-                <div style="margin-bottom: 30px; border-bottom: 1px solid #eee;">
-                    <b>Nome:</b> {{ arq.nome }} <br>
-                    <p class="debug">URL GERADA: {{ arq.url }}</p>
-                    {% if "http" in arq.url %}
-                        <img src="{{ arq.url }}" alt="Erro ao renderizar tag img">
-                    {% else %}
-                        <p style="color:red">Link inválido gerado</p>
-                    {% endif %}
-                </div>
-            {% endfor %}
+            <strong>Ficheiro:</strong> {{ item.nome }} <br>
+            <strong>Status Assinatura:</strong> {{ item.info.status }}
+            
+            {% if "OK" in item.info.status %}
+                <span class="url">{{ item.info.url }}</span>
+                <img src="{{ item.info.url }}" alt="Erro de renderização">
+            {% else %}
+                <p class="erro">Motivo: {{ item.info.msg }}</p>
+            {% endif %}
         </div>
+        {% endfor %}
         
-        <a href="/">Atualizar Página</a>
+        <br><a href="/" style="color: white;">Recarregar Teste</a>
     </body>
     </html>
     """
-    return render_template_string(html, 
-                                log_upload=log_upload, 
-                                lista=arquivos_links, 
-                                url_base=SUPABASE_URL, 
-                                bucket=BUCKET_NAME)
+    return render_template_string(html, resultados=resultados, bucket=BUCKET_NAME)
 
 if __name__ == "__main__":
     app.run(debug=True)
