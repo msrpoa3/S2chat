@@ -6,6 +6,7 @@ import psycopg2
 import requests
 import random
 import string
+import re  # Novo: Para tratar links legados
 from flask import Flask, request, render_template_string, session, redirect, url_for, make_response
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -162,6 +163,27 @@ HTML_LOGIN = """
 # ==========================================
 # BLOCO 4: NÚCLEO DO CHAT (LÓGICA E STORAGE)
 # ==========================================
+
+def obter_url_assinada(path_ou_url):
+    """Converte links antigos ou nomes de arquivos em URLs privadas temporárias."""
+    if not path_ou_url:
+        return None
+    
+    # Extrai apenas o nome do arquivo se for um link antigo (legado)
+    nome_arquivo = path_ou_url.split('/')[-1]
+    
+    url_request = f"{SUPABASE_URL}/storage/v1/object/sign/{BUCKET_NAME}/{nome_arquivo}"
+    headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
+    payload = {"expiresIn": 3600} # Link válido por 1 hora
+    
+    try:
+        res = requests.post(url_request, headers=headers, json=payload)
+        if res.status_code == 200:
+            return res.json().get("signedURL")
+    except:
+        return None
+    return None
+
 @app.route("/chat", methods=["GET", "POST"])
 def chat():
     senha = session.get('senha')
@@ -173,30 +195,29 @@ def chat():
     if request.method == "POST":
         msg = request.form.get("msg", "")
         file = request.files.get("arquivo")
-        file_url = None
+        file_ref = None # Guardaremos apenas a referência/nome
         
-        # Upload para Supabase
         if file and file.filename != "":
             filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename}"
             upload_url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET_NAME}/{filename}"
             headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": file.content_type}
             res = requests.post(upload_url, headers=headers, data=file.read())
             if res.status_code == 200:
-                file_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET_NAME}/{filename}"
+                file_ref = filename # Salva apenas o nome para o Bucket Privado
 
-        # Persistência no Banco
-        if msg.strip() or file_url:
+        if msg.strip() or file_ref:
             hora_atual = (datetime.utcnow() - timedelta(hours=3)).strftime('%d/%m %H:%M')
             conn = get_db_connection()
             cur = conn.cursor()
+            # Mantendo a coluna arquivo_url por compatibilidade, mas salvando o nome
             cur.execute("INSERT INTO mensagens (autor, texto, data, arquivo_url) VALUES (%s, %s, %s, %s)", 
-                        (meu_nome, msg, hora_atual, file_url))
+                        (meu_nome, msg, hora_atual, file_ref))
             conn.commit()
             cur.close()
             conn.close()
             return redirect(url_for('chat'))
 
-    # Busca de Mensagens
+    # Busca de Mensagens e conversão para URLs assinadas
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT autor, texto, data, arquivo_url FROM mensagens ORDER BY id DESC LIMIT 50")
@@ -204,10 +225,20 @@ def chat():
     cur.close()
     conn.close()
 
-    # ==========================================
-    # BLOCO 5: INTERFACE (HTML/CSS/JS)
-    # ==========================================
-    resp = make_response(render_template_string("""
+    # Processa as URLs para ficarem privadas antes de ir para o HTML
+    msgs_privadas = []
+    for m in msgs_raw:
+        autor, texto, data, ref_arquivo = m
+        url_temp = obter_url_assinada(ref_arquivo) if ref_arquivo else None
+        msgs_privadas.append((autor, texto, data, url_temp))
+
+    return renderizar_interface(msgs_privadas, meu_nome, cor_minha, cor_outra, parceiro)
+
+# ==========================================
+# BLOCO 5: INTERFACE (HTML/CSS/JS)
+# ==========================================
+def renderizar_interface(msgs, meu_nome, cor_minha, cor_outra, parceiro):
+    html = """
         <!DOCTYPE html>
         <html>
         <head>
@@ -307,9 +338,8 @@ def chat():
             </script>
         </body>
         </html>
-    """, msgs=msgs_raw, meu_nome=meu_nome, cor_minha=cor_minha, cor_outra=cor_outra, parceiro=parceiro))
-    
-    # Headers de Cache
+    """
+    resp = make_response(render_template_string(html, msgs=msgs, meu_nome=meu_nome, cor_minha=cor_minha, cor_outra=cor_outra, parceiro=parceiro))
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
