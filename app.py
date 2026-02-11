@@ -1,5 +1,5 @@
 # ==========================================
-# BLOCO 1: CONFIGURAÇÕES E AMBIENTE
+# BLOCO 1: IMPORTAÇÕES E CONFIGURAÇÕES INICIAIS
 # ==========================================
 import os
 import psycopg2
@@ -12,11 +12,10 @@ from flask import Flask, request, render_template_string, session, redirect, url
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-# Carrega variáveis de ambiente (Senhas, URLs de DB e Supabase)
 load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "cafe_com_seguranca_2026") 
-app.permanent_session_lifetime = timedelta(hours=2) # Tempo de vida da sessão: 2h
+app.permanent_session_lifetime = timedelta(hours=2) # TTL de 2 horas
 
 # Variáveis de Ambiente
 SENHA_ELE = os.getenv("SENHA_ELE")
@@ -26,16 +25,15 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip('/')
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 BUCKET_NAME = os.getenv("BUCKET_NAME")
 
+# ==========================================
+# BLOCO 2: UTILITÁRIOS E CONEXÕES
+# ==========================================
 def get_db_connection():
-    """Estabelece a conexão com o banco de dados PostgreSQL."""
+    """Estabelece a conexão com o PostgreSQL (Removida duplicata)."""
     return psycopg2.connect(DATABASE_URL, connect_timeout=10)
 
-# ==========================================
-# BLOCO 2: UTILITÁRIOS DE SEGURANÇA E MÍDIA
-# ==========================================
-
 def obter_url_assinada(path_ou_url):
-    """Gera URL temporária e criptografada via Supabase que expira em 1 hora."""
+    """Gera URL temporária via Supabase API (Expira em 1h)."""
     if not path_ou_url:
         return None
     
@@ -49,11 +47,10 @@ def obter_url_assinada(path_ou_url):
         res = requests.post(url_request, headers=headers, json={"expiresIn": 3600}, timeout=10)
         if res.status_code == 200:
             link_relativo = res.json().get("signedURL")
-            # Corrige o prefixo /storage/v1 se necessário
-            link_corrigido = link_relativo if link_relativo.startswith("/storage/v1") else f"/storage/v1{link_relativo}"
+            link_corrigido = f"/storage/v1{link_relativo}" if link_relativo and not link_relativo.startswith("/storage/v1") else link_relativo
             return f"{SUPABASE_URL}{link_corrigido}"
     except Exception as e:
-        print(f"Erro na assinatura de mídia: {e}")
+        print(f"Erro na assinatura: {e}")
     return None
 
 # ==========================================
@@ -62,15 +59,13 @@ def obter_url_assinada(path_ou_url):
 
 @app.route("/", methods=["GET", "POST"])
 def login():
-    """Login com validação de furtividade e ambiente anônimo."""
     if request.method == "GET":
-        session.clear() # Limpa rastros ao carregar o login
+        session.clear() # Limpeza de rastros ao carregar login
         
-    # Ofuscação de campo: Gera ID aleatório para o input de senha
     id_campo = ''.join(random.choices(string.ascii_letters, k=6))
 
     if request.method == "POST":
-        # Captura dinâmica do valor enviado através do prefixo pass_
+        # Captura dinâmica da senha ignorando o ID aleatório
         senha_digitada = next((val for key, val in request.form.items() if key.startswith('pass_')), None)
         
         if senha_digitada in [SENHA_ELE, SENHA_ELA]:
@@ -84,78 +79,10 @@ def login():
 
 @app.route("/sair")
 def sair():
-    """Logout total e destruição de sessão."""
-    session.clear()
+    session.clear() # Destruição de estado
     return redirect(url_for("login"))
 
-# ==========================================
-# BLOCO 4: MÓDULO DE CHAT
-# ==========================================
-
-@app.route("/chat", methods=["GET", "POST"])
-def chat():
-    """Módulo de Chat com visualização segura e processamento de mídia."""
-    senha = session.get('senha')
-    if not senha: 
-        return redirect(url_for('login')) # Proteção de rota
-    
-    # Identificação de perfil e cores
-    if senha == SENHA_ELE: 
-        meu_nome, cor_minha, cor_outra, parceiro = "Ele", "#005c4b", "#202c33", "Ela"
-    else: 
-        meu_nome, cor_minha, cor_outra, parceiro = "Ela", "#c2185b", "#202c33", "Ele"
-
-    if request.method == "POST":
-        msg = request.form.get("msg", "")
-        file = request.files.get("arquivo")
-        file_ref = None
-        
-        # Processamento e sanitização de arquivo
-        if file and file.filename != "":
-            nome_limpo = re.sub(r'[^a-zA-Z0-9._-]', '', file.filename.replace(" ", "_"))
-            filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{nome_limpo}"
-            upload_url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET_NAME}/{filename}"
-            headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": file.content_type}
-            
-            res = requests.post(upload_url, headers=headers, data=file.read())
-            if res.status_code == 200:
-                file_ref = filename # Armazena apenas a referência
-
-        if msg.strip() or file_ref:
-            # Normalização de Cronologia (UTC-3)
-            hora_atual = (datetime.utcnow() - timedelta(hours=3)).strftime('%d/%m %H:%M')
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute("INSERT INTO mensagens (autor, texto, data, arquivo_url) VALUES (%s, %s, %s, %s)", 
-                        (meu_nome, msg, hora_atual, file_ref))
-            conn.commit()
-            cur.close()
-            conn.close()
-            return redirect(url_for('chat'))
-
-    # Recuperação e processamento de histórico
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT autor, texto, data, arquivo_url FROM mensagens ORDER BY id DESC LIMIT 50")
-    msgs_raw = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    msgs_processadas = []
-    for m in msgs_raw:
-        autor, texto, data, ref_arquivo = m
-        url_segura = obter_url_assinada(ref_arquivo) if ref_arquivo else None
-        msgs_processadas.append((autor, texto, data, url_segura))
-    
-    # Inversão para ordem cronológica correta na interface
-    msgs_processadas = msgs_processadas[::-1]
-
-    return renderizar_interface(msgs_processadas, meu_nome, cor_minha, cor_outra, parceiro)
-
-# ==========================================
-# BLOCO 5: INTERFACE (TEMPLATES)
-# ==========================================
-
+# Template Login com Detecção de Quota (Navegação Anônima)
 HTML_LOGIN = """
 <!DOCTYPE html>
 <html lang="pt-br">
@@ -168,7 +95,8 @@ HTML_LOGIN = """
         .container { width: 90%; max-width: 400px; text-align: center; }
         input[type="password"] { width: 100%; padding: 22px; font-size: 20px; border-radius: 15px; border: 2px solid #2a3942; background: #2a3942; color: white; box-sizing: border-box; text-align: center; margin-bottom: 15px; outline: none; }
         button { width: 100%; padding: 22px; font-size: 18px; font-weight: bold; border-radius: 15px; border: none; background: #00a884; color: white; cursor: pointer; }
-        #bloqueio, #form-login { display: none; }
+        #bloqueio { display: none; background: #111b21; padding: 40px 20px; border-radius: 25px; border: 1px solid #ef5350; }
+        #form-login { display: none; }
         .erro { color: #ef5350; background: rgba(239, 83, 80, 0.1); padding: 10px; border-radius: 8px; margin-bottom: 15px; }
     </style>
 </head>
@@ -177,10 +105,10 @@ HTML_LOGIN = """
         <div id="loader">Validando segurança...</div>
         <div id="bloqueio">
             <h2>🛡️ Acesso Restrito</h2>
-            <p>Use o <b>Modo Anônimo</b> para entrar.</p>
+            <p>Use o <b>Modo Anônimo</b> para entrar no cofre.</p>
         </div>
         <div id="form-login">
-            <h2>🔐 Cofre</h2>
+            <h2>🔐 Cofre Privado</h2>
             {% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
             <form method="POST" autocomplete="off">
                 <input type="password" name="pass_{{ id }}" placeholder="Senha" autofocus autocomplete="new-password">
@@ -194,7 +122,6 @@ HTML_LOGIN = """
                 const {quota} = await navigator.storage.estimate();
                 const quotaMB = Math.round(quota / (1024 * 1024));
                 document.getElementById('loader').style.display = 'none';
-                // Barreira de Quota: Libera apenas se ambiente for volátil/anônimo
                 if (quotaMB < 1200) { document.getElementById('form-login').style.display = 'block'; }
                 else { document.getElementById('bloqueio').style.display = 'block'; }
             }
@@ -205,65 +132,124 @@ HTML_LOGIN = """
 </html>
 """
 
+# ==========================================
+# BLOCO 4: NÚCLEO DO CHAT
+# ==========================================
+
+@app.route("/chat", methods=["GET", "POST"])
+def chat():
+    senha = session.get('senha')
+    if not senha: return redirect(url_for('login'))
+    
+    if senha == SENHA_ELE: meu_nome, cor_minha, cor_outra, parceiro = "Ele", "#005c4b", "#202c33", "Ela"
+    else: meu_nome, cor_minha, cor_outra, parceiro = "Ela", "#c2185b", "#202c33", "Ele"
+
+    if request.method == "POST":
+        msg = request.form.get("msg", "")
+        file = request.files.get("arquivo")
+        file_ref = None
+        
+        if file and file.filename != "":
+            nome_limpo = re.sub(r'[^a-zA-Z0-9._-]', '', file.filename.replace(" ", "_"))
+            filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{nome_limpo}"
+            upload_url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET_NAME}/{filename}"
+            headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": file.content_type}
+            res = requests.post(upload_url, headers=headers, data=file.read())
+            if res.status_code == 200: file_ref = filename
+
+        if msg.strip() or file_ref:
+            hora_atual = (datetime.utcnow() - timedelta(hours=3)).strftime('%d/%m %H:%M')
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("INSERT INTO mensagens (autor, texto, data, arquivo_url) VALUES (%s, %s, %s, %s)", 
+                        (meu_nome, msg, hora_atual, file_ref))
+            conn.commit()
+            cur.close()
+            conn.close()
+            return redirect(url_for('chat'))
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT autor, texto, data, arquivo_url FROM mensagens ORDER BY id DESC LIMIT 50")
+    msgs_raw = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    msgs_processadas = []
+    for m in msgs_raw:
+        url_segura = obter_url_assinada(m[3]) if m[3] else None
+        msgs_processadas.append((m[0], m[1], m[2], url_segura))
+    
+    return renderizar_interface(msgs_processadas[::-1], meu_nome, cor_minha, cor_outra, parceiro)
+
 def renderizar_interface(msgs, meu_nome, cor_minha, cor_outra, parceiro):
     resp = make_response(render_template_string("""
         <!DOCTYPE html>
         <html>
         <head>
             <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
             <style>
-                body { font-family: sans-serif; margin: 0; background-color: #0b141a; color: #e9edef; }
-                .header { background: #202c33; padding: 10px; display: flex; align-items: center; position: sticky; top:0; z-index:100; justify-content: space-between; }
+                body { font-family: sans-serif; margin: 0; background: #0b141a; color: #e9edef; }
+                .header { background: #202c33; padding: 10px; position: sticky; top:0; z-index:100; display: flex; justify-content: space-between; align-items: center; }
                 .chat-container { display: flex; flex-direction: column; padding: 10px; margin-bottom: 80px; }
-                .msg-row { display: flex; width: 100%; margin-bottom: 12px; }
-                .msg-bubble { max-width: 85%; padding: 8px 12px; border-radius: 12px; }
-                .mine { justify-content: flex-end; } .mine .msg-bubble { background: {{cor_minha}}; }
-                .other { justify-content: flex-start; } .other .msg-bubble { background: {{cor_outra}}; }
-                .footer { position: fixed; bottom: 0; width: 100%; background: #202c33; padding: 10px; display: flex; box-sizing: border-box; }
-                .media-bar { background: #111b21; padding: 10px; overflow-x: auto; display: flex; gap: 8px; }
+                .msg-row { display: flex; margin-bottom: 12px; }
+                .mine { justify-content: flex-end; }
+                .mine .bubble { background: {{cor_minha}}; border-radius: 12px 0 12px 12px; }
+                .other { justify-content: flex-start; }
+                .other .bubble { background: {{cor_outra}}; border-radius: 0 12px 12px 12px; }
+                .bubble { max-width: 85%; padding: 8px 12px; font-size: 15px; }
+                .media-bar { background: #111b21; padding: 10px; display: flex; gap: 8px; overflow-x: auto; border-bottom: 1px solid #222; }
                 .img-thumb { width: 60px; height: 60px; object-fit: cover; border-radius: 8px; }
+                .footer { position: fixed; bottom: 0; width: 100%; background: #202c33; padding: 10px; display: flex; align-items: center; box-sizing: border-box; }
+                .input-msg { flex: 1; background: #2a3942; border: none; padding: 12px; border-radius: 25px; color: white; margin: 0 10px; }
+                #overlay { position: fixed; display: none; width: 100%; height: 100%; top: 0; left: 0; background: rgba(0,0,0,0.9); z-index: 2000; justify-content: center; align-items: center; }
             </style>
         </head>
         <body oncontextmenu="return false;">
             <div class="header">
-                <span><b>{{parceiro}}</b> (online)</span>
+                <div style="display:flex; align-items:center;">
+                    <div style="width:35px; height:35px; background:{{cor_minha}}; border-radius:50%; margin-right:10px; display:flex; align-items:center; justify-content:center;">{{parceiro[0]}}</div>
+                    <b>{{parceiro}}</b>
+                </div>
                 <a href="/sair" style="color:#8696a0;"><i class="fa-solid fa-right-from-bracket"></i></a>
             </div>
             <div class="media-bar">
-                {% for m in msgs if m[3] %}<img src="{{m[3]}}" class="img-thumb">{% endfor %}
+                {% for m in msgs if m[3] %}<img src="{{m[3]}}" class="img-thumb" onclick="openImg('{{m[3]}}')">{% endfor %}
             </div>
             <div class="chat-container">
                 {% for m in msgs %}
                 <div class="msg-row {% if m[0] == meu_nome %}mine{% else %}other{% endif %}">
-                    <div class="msg-bubble">
+                    <div class="bubble">
                         {% if m[1] %}<div>{{m[1]}}</div>{% endif %}
-                        {% if m[3] %}<div style="color:#00a884; margin-top:5px;"><i class="fa-solid fa-camera"></i> Foto</div>{% endif %}
-                        <small style="opacity:0.5;">{{ m[2] }}</small>
+                        {% if m[3] %}<div style="color:#00a884; margin-top:5px;" onclick="openImg('{{m[3]}}')"><i class="fa-solid fa-camera"></i> Foto</div>{% endif %}
+                        <small style="opacity:0.5; float:right; margin-top:5px;">{{ m[2] }}</small>
                     </div>
                 </div>
                 {% endfor %}
             </div>
+            <div id="overlay" onclick="closeImg()"><img id="imgFull" style="max-width:95%; max-height:95%;"></div>
             <form method="POST" enctype="multipart/form-data" class="footer">
-                <input type="file" name="arquivo" id="arquivo" style="display:none">
-                <label for="arquivo" style="color:#8696a0; font-size:24px; margin-right:10px;"><i class="fa-solid fa-paperclip"></i></label>
-                <input type="text" name="msg" style="flex:1; border-radius:20px; border:none; padding:10px;" placeholder="Mensagem">
-                <button type="submit" style="background:none; border:none; color:#00a884; font-size:24px;"><i class="fa-solid fa-paper-plane"></i></button>
+                <label for="arquivo" style="color:#8696a0; font-size:22px;"><i class="fa-solid fa-paperclip"></i></label>
+                <input type="file" id="arquivo" name="arquivo" style="display:none">
+                <input type="text" name="msg" id="msgInput" class="input-msg" placeholder="Mensagem" autocomplete="off">
+                <button type="submit" style="background:none; border:none; color:#00a884; font-size:22px;"><i class="fa-solid fa-paper-plane"></i></button>
             </form>
             <script>
                 window.scrollTo(0, document.body.scrollHeight);
-                // Auto-Refresh Inteligente (10s)
+                function openImg(src) { document.getElementById('imgFull').src = src; document.getElementById('overlay').style.display = 'flex'; }
+                function closeImg() { document.getElementById('overlay').style.display = 'none'; }
                 setInterval(() => {
-                    if (document.activeElement.tagName !== 'INPUT') { window.location.reload(); }
+                    if (document.activeElement.tagName !== 'INPUT' && document.getElementById('overlay').style.display !== 'flex') {
+                        window.location.reload();
+                    }
                 }, 10000);
             </script>
         </body>
         </html>
     """, msgs=msgs, meu_nome=meu_nome, cor_minha=cor_minha, cor_outra=cor_outra, parceiro=parceiro))
-    
-    # Proteção contra Cache/Botão Voltar
-    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate" # Proteção contra botão "Voltar"
     return resp
 
 if __name__ == "__main__":
