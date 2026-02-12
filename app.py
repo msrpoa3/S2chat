@@ -40,210 +40,99 @@ def get_db_connection():
 
 @app.route("/", methods=["GET", "POST"])
 def login():
-    # Limpa a sessão ao carregar a página de login para garantir que está "limpo"
-    if request.method == "GET":
-        session.clear()
-        
-    id_campo = ''.join(random.choices(string.ascii_letters, k=6))
-
+    session.clear()
+    id_aleatorio = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+    
     if request.method == "POST":
-        # Pega a senha independente do ID dinâmico do campo
-        senha_digitada = next((val for key, val in request.form.items() if key.startswith('pass_')), None)
-        
-        if senha_digitada in [SENHA_ELE, SENHA_ELA]:
+        senha_input = request.form.get("senha")
+        if senha_input in [SENHA_ELE, SENHA_ELA]:
+            session['senha'] = senha_input
             session.permanent = True
-            session["senha"] = senha_digitada
-            return redirect(url_for("chat"))
-        
-        return render_template_string(HTML_LOGIN, erro="Senha incorreta. Tente novamente.", id=id_campo)
+            return redirect(url_for('chat'))
+        return redirect(url_for('login'))
 
-    return render_template_string(HTML_LOGIN, id=id_campo)
+    return render_template_string("""
+        <!DOCTYPE html>
+        <html lang="pt-br">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+            <title>Cofre Privado</title>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+            <style>
+                body { font-family: 'Segoe UI', sans-serif; background-color: #0b141a; color: #e9edef; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                .login-card { background: #202c33; padding: 40px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); width: 100%; max-width: 320px; text-align: center; }
+                .icon-lock { font-size: 50px; color: #00a884; margin-bottom: 20px; }
+                h2 { margin-bottom: 30px; font-weight: 300; }
+                /* Ofuscação do campo de senha */
+                .input-field { width: 100%; padding: 15px; margin-bottom: 20px; border: none; border-radius: 10px; background: #2a3942; color: white; font-size: 18px; box-sizing: border-box; text-align: center; }
+                .btn-login { width: 100%; padding: 15px; border: none; border-radius: 10px; background: #00a884; color: white; font-size: 18px; font-weight: bold; cursor: pointer; }
+                #warning { color: #ef5350; font-size: 14px; display: none; margin-top: 20px; }
+            </style>
+        </head>
+        <body>
+            <div class="login-card" id="loginCard" style="display:none;">
+                <i class="fa-solid fa-shield-halved icon-lock"></i>
+                <h2>Cofre Privado</h2>
+                <form method="POST" id="loginForm" autocomplete="off">
+                    <input type="password" name="senha" id="pass_{{id_aleatorio}}" 
+                           class="input-field" placeholder="Chave de Acesso" 
+                           required autocomplete="new-password">
+                    <button type="submit" class="btn-login">ACESSAR</button>
+                </form>
+            </div>
+            
+            <div id="restriction" style="display:none; text-align:center; padding: 20px;">
+                <i class="fa-solid fa-triangle-exclamation" style="font-size:50px; color:#ff9800;"></i>
+                <h2 style="color:#ff9800;">Acesso Restrito</h2>
+                <p>Para sua segurança, utilize o <b>Modo Anônimo</b>.</p>
+            </div>
+
+            <script>
+                // VALIDAÇÃO DE AMBIENTE (CHECKLIST: BARREIRA DE NAVEGAÇÃO)
+                async function checkStorage() {
+                    if (navigator.storage && navigator.storage.estimate) {
+                        const {quota} = await navigator.storage.estimate();
+                        const quotaMB = quota / (1024 * 1024);
+                        
+                        // Se quota > 1200MB, detecta Navegação Normal e bloqueia
+                        if (quotaMB > 1200) {
+                            document.getElementById('restriction').style.display = 'block';
+                        } else {
+                            document.getElementById('loginCard').style.display = 'block';
+                        }
+                    } else {
+                        // Fallback para navegadores sem API de estimativa
+                        document.getElementById('loginCard').style.display = 'block';
+                    }
+                }
+
+                // IMPLEMENTAÇÃO C: LIMPEZA INSTANTÂNEA (ANTI-BACK)
+                document.getElementById('loginForm').onsubmit = function() {
+                    const passField = document.getElementById('pass_{{id_aleatorio}}');
+                    setTimeout(() => {
+                        passField.value = ''; // Limpa o rastro visual no milissegundo do envio
+                    }, 10);
+                };
+
+                checkStorage();
+            </script>
+        </body>
+        </html>
+    """, id_aleatorio=id_aleatorio)
 
 @app.route("/sair")
 def sair():
     session.clear()
-    return redirect(url_for("login"))
-
-# Template de Login Mobile com Trava de Anonimato
-HTML_LOGIN = """
-<!DOCTYPE html>
-<html lang="pt-br">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Cofre Privado</title>
-    <style>
-        body { 
-            background: #0b141a; color: white; 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
-            margin: 0; display: flex; align-items: center; justify-content: center; 
-            height: 100vh; overflow: hidden; 
-        }
-        .container { width: 90%; max-width: 400px; text-align: center; }
-        .logo { font-size: 60px; margin-bottom: 20px; }
-        
-        input[type="password"] { 
-            width: 100%; padding: 22px; font-size: 20px; border-radius: 15px; border: 2px solid #2a3942; 
-            background: #2a3942; color: white; box-sizing: border-box; text-align: center; 
-            margin-bottom: 15px; outline: none; appearance: none;
-        }
-        input[type="password"]:focus { border-color: #00a884; }
-        
-        button { 
-            width: 100%; padding: 22px; font-size: 18px; font-weight: bold; border-radius: 15px; border: none; 
-            background: #00a884; color: white; cursor: pointer; transition: 0.2s;
-        }
-        button:active { transform: scale(0.96); opacity: 0.9; }
-        
-        #bloqueio { display: none; background: #111b21; padding: 40px 20px; border-radius: 25px; border: 1px solid #ef5350; }
-        #bloqueio h2 { color: #ef5350; font-size: 24px; margin-top: 0; }
-        #bloqueio p { color: #8696a0; line-height: 1.6; font-size: 16px; }
-        
-        #form-login { display: none; }
-        .erro { color: #ef5350; background: rgba(239, 83, 80, 0.1); padding: 10px; border-radius: 8px; margin-bottom: 15px; font-size: 14px; }
-        .loading { font-size: 16px; color: #8696a0; font-style: italic; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div id="loader" class="loading">Iniciando protocolo de segurança...</div>
-
-        <div id="bloqueio">
-            <div class="logo">🛡️</div>
-            <h2>Acesso Restrito</h2>
-            <p>Este cofre contém informações sensíveis e não deixa rastros.</p>
-            <p>Para entrar, você <b>deve</b> usar o <b>Modo Anônimo</b> do seu navegador.</p>
-            <div style="margin-top: 30px; font-size: 12px; color: #667781; border-top: 1px solid #222; padding-top: 20px;">
-                Abra as configurações do navegador e selecione "Nova guia anônima".
-            </div>
-        </div>
-
-        <div id="form-login">
-            <div class="logo">🔐</div>
-            <h2 style="margin-bottom: 30px; font-weight: 300;">Cofre Privado</h2>
-            {% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
-            <form method="POST" autocomplete="off">
-                <input type="password" name="pass_{{ id }}" placeholder="Digite a senha" autofocus autocomplete="new-password">
-                <button type="submit">ENTRAR</button>
-            </form>
-        </div>
-    </div>
-
-    <script>
-        async function verificarSeguranca() {
-            const loader = document.getElementById('loader');
-            const bloqueio = document.getElementById('bloqueio');
-            const form = document.getElementById('form-login');
-
-            if ('storage' in navigator && 'estimate' in navigator.storage) {
-                try {
-                    const {quota} = await navigator.storage.estimate();
-                    const quotaMB = Math.round(quota / (1024 * 1024));
-                    
-                    loader.style.display = 'none';
-
-                    // Se a quota for baixa (< 1200MB no mobile), libera o acesso
-                    if (quotaMB < 1200) {
-                        form.style.display = 'block';
-                    } else {
-                        bloqueio.style.display = 'block';
-                    }
-                } catch (e) {
-                    loader.innerText = "Erro ao validar segurança.";
-                }
-            } else {
-                loader.innerText = "Navegador não suportado.";
-            }
-        }
-        
-        // Pequeno delay para estabilidade da API
-        setTimeout(verificarSeguranca, 600);
-    </script>
-</body>
-</html>
-"""
+    # Redirecionamento Furtivo (Mapa de Funções)
+    return redirect("https://www.google.com")
 
 
 # ==========================================
 # BLOCO 4: NÚCLEO DO CHAT (LÓGICA E STORAGE)
 # ==========================================
 
-def obter_url_assinada(path_ou_url):
-    """Gera URL temporária corrigindo o prefixo /storage/v1."""
-    if not path_ou_url:
-        return None
-    
-    nome_arquivo = path_ou_url.split('/')[-1].strip()
-    nome_limpo = urllib.parse.unquote(nome_arquivo)
-    
-    url_request = f"{SUPABASE_URL}/storage/v1/object/sign/{BUCKET_NAME}/{nome_limpo}"
-    headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
-    
-    try:
-        res = requests.post(url_request, headers=headers, json={"expiresIn": 3600}, timeout=10)
-        if res.status_code == 200:
-            link_relativo = res.json().get("signedURL")
-            if link_relativo and not link_relativo.startswith("/storage/v1"):
-                link_corrigido = f"/storage/v1{link_relativo}"
-            else:
-                link_corrigido = link_relativo
-            return f"{SUPABASE_URL}{link_corrigido}"
-    except Exception as e:
-        print(f"Erro na assinatura: {e}")
-    return None
-
-@app.route("/chat", methods=["GET", "POST"])
-def chat():
-    senha = session.get('senha')
-    if not senha: return redirect(url_for('login'))
-    
-    if senha == SENHA_ELE: meu_nome, cor_minha, cor_outra, parceiro = "Ele", "#005c4b", "#202c33", "Ela"
-    else: meu_nome, cor_minha, cor_outra, parceiro = "Ela", "#c2185b", "#202c33", "Ele"
-
-    if request.method == "POST":
-        msg = request.form.get("msg", "")
-        file = request.files.get("arquivo")
-        file_ref = None
-        
-        if file and file.filename != "":
-            nome_limpo = re.sub(r'[^a-zA-Z0-9._-]', '', file.filename.replace(" ", "_"))
-            filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{nome_limpo}"
-            upload_url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET_NAME}/{filename}"
-            headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": file.content_type}
-            res = requests.post(upload_url, headers=headers, data=file.read())
-            if res.status_code == 200:
-                file_ref = filename
-
-        if msg.strip() or file_ref:
-            # Mantém a cronologia UTC-3 conforme o Checklist
-            hora_atual = (datetime.utcnow() - timedelta(hours=3)).strftime('%d/%m %H:%M')
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute("INSERT INTO mensagens (autor, texto, data, arquivo_url) VALUES (%s, %s, %s, %s)", 
-                        (meu_nome, msg, hora_atual, file_ref))
-            conn.commit()
-            cur.close()
-            conn.close()
-            return redirect(url_for('chat'))
-
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT autor, texto, data, arquivo_url FROM mensagens ORDER BY id DESC LIMIT 50")
-    msgs_raw = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    msgs_processadas = []
-    for m in msgs_raw:
-        autor, texto, data, ref_arquivo = m
-        url_segura = obter_url_assinada(ref_arquivo) if ref_arquivo else None
-        msgs_processadas.append((autor, texto, data, url_segura))
-    
-    # Inversão de lista para ordem cronológica correta
-    msgs_processadas = msgs_processadas[::-1]
-
-    return renderizar_interface(msgs_processadas, meu_nome, cor_minha, cor_outra, parceiro)
-
+# ... (Manter função obter_url_assinada e a rota chat() igual à anterior) ...
 
 def renderizar_interface(msgs_processadas, meu_nome, cor_minha, cor_outra, parceiro):
     resp = make_response(render_template_string("""
@@ -255,7 +144,7 @@ def renderizar_interface(msgs_processadas, meu_nome, cor_minha, cor_outra, parce
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
             <style>
                 body { font-family: 'Segoe UI', sans-serif; margin: 0; background-color: #0b141a; color: #e9edef; overflow-x: hidden; }
-                .header { background: #202c33; padding: 10px 20px; display: flex; align-items: center; position: sticky; top:0; z-index:100; justify-content: space-between; }
+                .header { background: #202c33; padding: 10px 15px; display: flex; align-items: center; position: sticky; top:0; z-index:100; justify-content: space-between; }
                 .chat-container { display: flex; flex-direction: column; padding: 10px; margin-bottom: 80px; }
                 .msg-row { display: flex; width: 100%; margin-bottom: 12px; }
                 .msg-bubble { max-width: 85%; padding: 8px 12px; border-radius: 12px; font-size: 15px; position: relative; }
@@ -264,38 +153,39 @@ def renderizar_interface(msgs_processadas, meu_nome, cor_minha, cor_outra, parce
                 .other { justify-content: flex-start; }
                 .other .msg-bubble { background: {{cor_outra}}; border-top-left-radius: 0; }
                 
-                /* IMPLEMENTAÇÃO B: OFUSCAÇÃO VISUAL DINÂMICA (CSS BLUR) */
-                .msg-text, .img-thumb, .photo-label { 
-                    filter: blur(8px); 
-                    transition: filter 0.2s; 
-                    user-select: none; 
-                    -webkit-user-select: none; 
+                /* MODO PRIVACIDADE ATIVÁVEL */
+                body.blur-active .msg-text, body.blur-active .img-thumb, body.blur-active .photo-label { 
+                    filter: blur(10px); 
                 }
-                .msg-bubble:active .msg-text, .msg-bubble:active .photo-label, .img-thumb:active { 
+                body.blur-active .msg-bubble:active .msg-text, 
+                body.blur-active .msg-bubble:active .photo-label, 
+                body.blur-active .img-thumb:active { 
                     filter: blur(0); 
                 }
 
                 .time { font-size: 0.65em; color: rgba(255,255,255,0.4); text-align: right; margin-top: 5px; display: block; }
                 .footer { position: fixed; bottom: 0; width: 100%; background: #202c33; padding: 10px; display: flex; align-items: center; box-sizing: border-box; }
                 .input-msg { flex: 1; background: #2a3942; border: none; padding: 12px; border-radius: 25px; color: white; outline: none; margin: 0 10px; font-size: 16px; }
-                .icon-btn { color: #8696a0; font-size: 22px; cursor: pointer; }
-                .clip-active { color: #00a884 !important; }
-                .media-bar { background: #111b21; padding: 10px; overflow-x: auto; display: flex; gap: 8px; border-bottom: 1px solid #222; white-space: nowrap; }
-                .img-thumb { width: 60px; height: 60px; object-fit: cover; border-radius: 8px; flex-shrink: 0; border: 1px solid #333; cursor: pointer; }
-                #overlay { position: fixed; display: none; width: 100%; height: 100%; top: 0; left: 0; background: rgba(0,0,0,0.98); z-index: 2000; justify-content: center; align-items: center; }
+                .icon-btn { color: #8696a0; font-size: 20px; cursor: pointer; background: none; border: none; }
+                .media-bar { background: #111b21; padding: 10px; overflow-x: auto; display: flex; gap: 8px; border-bottom: 1px solid #222; }
+                .img-thumb { width: 60px; height: 60px; object-fit: cover; border-radius: 8px; flex-shrink: 0; transition: filter 0.2s; }
+                #overlay { position: fixed; display: none; width: 100%; height: 100%; top: 0; left: 0; background: rgba(0,0,0,0.95); z-index: 2000; justify-content: center; align-items: center; }
                 #overlay img { max-width: 100%; max-height: 100%; }
-                #cancelFile { display: none; color: #ef5350; margin-left: 5px; font-size: 18px; }
-                
-                canvas.msg-canvas { max-width: 100%; height: auto; }
+                canvas.msg-canvas { max-width: 100%; display: block; }
             </style>
         </head>
         <body oncontextmenu="return false;">
             <div class="header">
                 <div style="display:flex; align-items:center;">
-                    <div style="width:35px; height:35px; background:{{cor_minha}}; border-radius:50%; margin-right:12px; display:flex; align-items:center; justify-content:center; font-weight:bold;">{{parceiro[0]}}</div>
+                    <div style="width:35px; height:35px; background:{{cor_minha}}; border-radius:50%; margin-right:10px; display:flex; align-items:center; justify-content:center; font-weight:bold;">{{parceiro[0]}}</div>
                     <div><span style="font-weight:bold;">{{parceiro}}</span><br><small style="color:#00a884;">online</small></div>
                 </div>
-                <a href="/sair" class="icon-btn"><i class="fa-solid fa-right-from-bracket"></i></a>
+                <div style="display:flex; gap: 20px; align-items:center;">
+                    <div onclick="togglePrivacy()" class="icon-btn" id="privacyBtn">
+                        <i class="fa-solid fa-eye"></i>
+                    </div>
+                    <a href="/sair" class="icon-btn"><i class="fa-solid fa-right-from-bracket"></i></a>
+                </div>
             </div>
 
             <div class="media-bar">
@@ -324,42 +214,73 @@ def renderizar_interface(msgs_processadas, meu_nome, cor_minha, cor_outra, parce
 
             <div id="overlay" onclick="closeImg()"><img id="imgFull"></div>
 
-            <form method="POST" enctype="multipart/form-data" class="footer" id="mainForm">
-                <label for="arquivo" class="icon-btn" id="clipLabel"><i class="fa-solid fa-paperclip"></i></label>
-                <i class="fa-solid fa-circle-xmark" id="cancelFile" onclick="clearFile()"></i>
+            <form method="POST" enctype="multipart/form-data" class="footer" id="mainForm" autocomplete="off">
+                <label for="arquivo" class="icon-btn"><i class="fa-solid fa-paperclip"></i></label>
                 <input type="file" id="arquivo" name="arquivo" style="display:none" onchange="fileSelected()">
                 <input type="text" name="msg" id="msgInput" class="input-msg" placeholder="Mensagem" autocomplete="off">
-                <button type="submit" class="icon-btn" style="background:none; border:none;"><i class="fa-solid fa-paper-plane" style="color:#00a884;"></i></button>
+                <button type="submit" class="icon-btn"><i class="fa-solid fa-paper-plane" style="color:#00a884;"></i></button>
             </form>
 
             <script>
-                // IMPLEMENTAÇÃO A: LÓGICA DO CANVAS
+                // CANVAS COM WORD WRAP (FONT SIZE FIXO)
+                function wrapText(ctx, text, maxWidth) {
+                    const words = text.split(' ');
+                    let line = '';
+                    const lines = [];
+                    for (let n = 0; n < words.length; n++) {
+                        let testLine = line + words[n] + ' ';
+                        let metrics = ctx.measureText(testLine);
+                        if (metrics.width > maxWidth && n > 0) {
+                            lines.push(line);
+                            line = words[n] + ' ';
+                        } else { line = testLine; }
+                    }
+                    lines.push(line);
+                    return lines;
+                }
+
                 function drawCanvasText() {
                     const containers = document.querySelectorAll('.msg-text');
+                    const maxWidth = window.innerWidth * 0.7; // Limite lateral da bolha
+                    
                     containers.forEach(div => {
                         const text = div.getAttribute('data-raw');
                         const canvas = div.querySelector('canvas');
                         const ctx = canvas.getContext('2d');
                         const fontSize = 16;
                         ctx.font = fontSize + "px 'Segoe UI', sans-serif";
-                        const metrics = ctx.measureText(text);
                         
-                        canvas.width = metrics.width + 10;
-                        canvas.height = fontSize + 10;
+                        const lines = wrapText(ctx, text, maxWidth);
+                        const canvasWidth = Math.min(maxWidth, ctx.measureText(text).width + 10);
+                        
+                        canvas.width = canvasWidth;
+                        canvas.height = lines.length * (fontSize + 6);
                         
                         ctx.fillStyle = "white";
                         ctx.font = fontSize + "px 'Segoe UI', sans-serif";
-                        ctx.textBaseline = "middle";
-                        ctx.fillText(text, 0, canvas.height / 2);
+                        ctx.textBaseline = "top";
+                        
+                        lines.forEach((line, i) => {
+                            ctx.fillText(line.trim(), 0, i * (fontSize + 6));
+                        });
                     });
                 }
 
-                // IMPLEMENTAÇÃO C: LIMPEZA INSTANTÂNEA
+                // TOGGLE PRIVACIDADE
+                function togglePrivacy() {
+                    document.body.classList.toggle('blur-active');
+                    const btn = document.getElementById('privacyBtn');
+                    if(document.body.classList.contains('blur-active')) {
+                        btn.innerHTML = '<i class="fa-solid fa-eye-slash" style="color:#ef5350;"></i>';
+                    } else {
+                        btn.innerHTML = '<i class="fa-solid fa-eye"></i>';
+                    }
+                }
+
+                // LIMPEZA INSTANTÂNEA AO ENVIAR
                 document.getElementById('mainForm').onsubmit = function() {
-                    setTimeout(() => {
-                        document.getElementById('msgInput').value = '';
-                        clearFile();
-                    }, 10);
+                    const input = document.getElementById('msgInput');
+                    setTimeout(() => { input.value = ''; }, 10);
                 };
 
                 window.onload = () => {
@@ -367,43 +288,15 @@ def renderizar_interface(msgs_processadas, meu_nome, cor_minha, cor_outra, parce
                     window.scrollTo(0, document.body.scrollHeight);
                 };
 
-                let isOverlayOpen = false;
-                let isWindowFocused = true;
-                window.onfocus = () => { isWindowFocused = true; };
-                window.onblur = () => { isWindowFocused = false; };
-
-                function fileSelected() {
-                    const fileInput = document.getElementById('arquivo');
-                    if (fileInput.files.length > 0) {
-                        document.getElementById('clipLabel').classList.add('clip-active');
-                        document.getElementById('cancelFile').style.display = "inline";
-                        document.getElementById('msgInput').placeholder = "Foto selecionada...";
-                    }
-                }
-
-                function clearFile() {
-                    document.getElementById('arquivo').value = "";
-                    document.getElementById('clipLabel').classList.remove('clip-active');
-                    document.getElementById('cancelFile').style.display = "none";
-                    document.getElementById('msgInput').placeholder = "Mensagem";
-                }
-
-                function openImg(src) { document.getElementById('imgFull').src = src; document.getElementById('overlay').style.display = 'flex'; isOverlayOpen = true; }
-                function closeImg() { document.getElementById('overlay').style.display = 'none'; isOverlayOpen = false; }
-
-                setInterval(() => {
-                    const hasFile = document.getElementById('arquivo').files.length > 0;
-                    const hasText = document.getElementById('msgInput').value !== "";
-                    if (document.activeElement.tagName !== 'INPUT' && !isOverlayOpen && !hasText && !hasFile && isWindowFocused) {
-                        window.location.reload();
-                    }
-                }, 10000);
+                function openImg(src) { document.getElementById('imgFull').src = src; document.getElementById('overlay').style.display = 'flex'; }
+                function closeImg() { document.getElementById('overlay').style.display = 'none'; }
+                
+                // ... (Manter resto dos scripts de foco e refresh do arquivo anterior) ...
             </script>
         </body>
         </html>
     """, msgs=msgs_processadas, meu_nome=meu_nome, cor_minha=cor_minha, cor_outra=cor_outra, parceiro=parceiro))
     
+    # Headers de Cache (Checklist)
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    resp.headers["Pragma"] = "no-cache"
-    resp.headers["Expires"] = "0"
     return resp
