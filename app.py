@@ -304,6 +304,36 @@ def renderizar_interface(msgs, meu_nome, cor_minha, cor_outra, parceiro):
                 function closeImg() { document.getElementById('overlay').style.display = 'none'; }
 
                 window.onload = () => { drawCanvas(); window.scrollTo(0, document.body.scrollHeight); };
+                
+                // --- IMPLEMENTAÇÃO DO AUTO-REFRESH INTELIGENTE (ORIGINAL) ---
+let isOverlayOpen = false; // Âncora de Foto
+let isWindowFocused = true;
+
+window.onfocus = () => { isWindowFocused = true; };
+window.onblur = () => { isWindowFocused = false; };
+
+// Funções de Overlay atualizadas para gerenciar a âncora
+function openImg(src) { 
+    document.getElementById('imgFull').src = src; 
+    document.getElementById('overlay').style.display = 'flex'; 
+    isOverlayOpen = true; 
+}
+function closeImg() { 
+    document.getElementById('overlay').style.display = 'none'; 
+    isOverlayOpen = false; 
+}
+
+setInterval(() => {
+    const hasFile = document.getElementById('arquivo').files.length > 0; // Âncora de Anexo
+    const hasText = document.getElementById('msgInput').value !== "";    // Âncora de Texto
+    const isTyping = document.activeElement.tagName === 'INPUT';        // Âncora de Foco/Teclado
+
+    // Só recarrega se: Janela focada + Não estiver digitando + Overlay fechado + Sem texto + Sem anexo
+    if (isWindowFocused && !isTyping && !isOverlayOpen && !hasText && !hasFile) {
+        window.location.reload();
+    }
+}, 10000); // 10 Segundos exatos conforme o original
+
             </script>
         </body>
         </html>
