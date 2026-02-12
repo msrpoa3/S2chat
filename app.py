@@ -323,16 +323,22 @@ function closeImg() {
     isOverlayOpen = false; 
 }
 
-setInterval(() => {
-    const hasFile = document.getElementById('arquivo').files.length > 0; // Âncora de Anexo
-    const hasText = document.getElementById('msgInput').value !== "";    // Âncora de Texto
-    const isTyping = document.activeElement.tagName === 'INPUT';        // Âncora de Foco/Teclado
+                // --- O REFRESH INTELIGENTE COM 5 ÂNCORAS (10 SEGUNDOS) ---
+                setInterval(() => {
+                    const hasFile = document.getElementById('arquivo').files.length > 0;
+                    const hasText = document.getElementById('msgInput').value !== "";
+                    const isTyping = document.activeElement.tagName === 'INPUT';
+                    
+                    // NOVA ÂNCORA: Verifica se o Modo de Privacidade (Olhinho) está ATIVO
+                    const isPrivacyActive = document.body.classList.contains('blur-active');
 
-    // Só recarrega se: Janela focada + Não estiver digitando + Overlay fechado + Sem texto + Sem anexo
-    if (isWindowFocused && !isTyping && !isOverlayOpen && !hasText && !hasFile) {
-        window.location.reload();
-    }
-}, 10000); // 10 Segundos exatos conforme o original
+                    // Só recarrega se: 
+                    // Focado + Não Digitando + Foto Fechada + Sem Texto + Sem Anexo + PRIVACIDADE DESATIVADA
+                    if (isWindowFocused && !isTyping && !isOverlayOpen && !hasText && !hasFile && !isPrivacyActive) {
+                        window.location.reload();
+                    }
+                }, 10000);
+
 
             </script>
         </body>
