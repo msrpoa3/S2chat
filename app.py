@@ -113,7 +113,7 @@ HTML_LOGIN = """
 # ==========================================
 
 def obter_url_assinada(path_ou_url):
-    """Gera URL temporária via Supabase."""
+    """Gera URL temporária via Supabase corrigindo o prefixo."""
     if not path_ou_url: return None
     nome_arquivo = path_ou_url.split('/')[-1].strip()
     nome_limpo = urllib.parse.unquote(nome_arquivo)
@@ -166,12 +166,12 @@ def chat():
     cur.close()
     conn.close()
 
-    msgs_processadas = []
+    msgs_proc = []
     for m in msgs_raw:
-        url_segura = obter_url_assinada(m[3]) if m[3] else None
-        msgs_processadas.append((m[0], m[1], m[2], url_segura))
+        url = obter_url_assinada(m[3]) if m[3] else None
+        msgs_proc.append((m[0], m[1], m[2], url))
     
-    return renderizar_interface(msgs_processadas[::-1], meu_nome, cor_minha, cor_outra, parceiro)
+    return renderizar_interface(msgs_proc[::-1], meu_nome, cor_minha, cor_outra, parceiro)
 
 def renderizar_interface(msgs, meu_nome, cor_minha, cor_outra, parceiro):
     resp = make_response(render_template_string("""
@@ -190,14 +190,19 @@ def renderizar_interface(msgs, meu_nome, cor_minha, cor_outra, parceiro):
                 .mine { justify-content: flex-end; } .mine .msg-bubble { background: {{cor_minha}}; border-top-right-radius: 0; }
                 .other { justify-content: flex-start; } .other .msg-bubble { background: {{cor_outra}}; border-top-left-radius: 0; }
                 
-                /* Privacidade */
+                /* Privacidade e Ofuscação */
                 body.blur-active .msg-canvas, body.blur-active .img-thumb, body.blur-active .photo-label { filter: blur(10px); transition: 0.2s; }
                 body.blur-active .msg-bubble:active .msg-canvas, body.blur-active .img-thumb:active { filter: blur(0); }
                 
+                /* Estilos do Rodapé e Clipe */
+                .footer { position: fixed; bottom: 0; width: 100%; background: #202c33; padding: 10px; display: flex; align-items: center; box-sizing: border-box; }
+                .input-msg { flex: 1; background: #2a3942; border: none; padding: 12px; border-radius: 25px; color: white; margin: 0 10px; outline: none; font-size: 16px; }
+                .icon-btn { color: #8696a0; font-size: 22px; cursor: pointer; }
+                .clip-active { color: #00a884 !important; }
+                #cancelFile { display: none; color: #ef5350; margin-left: 5px; font-size: 18px; cursor: pointer; }
+                
                 .media-bar { background: #111b21; padding: 10px; display: flex; gap: 8px; overflow-x: auto; border-bottom: 1px solid #222; }
                 .img-thumb { width: 60px; height: 60px; object-fit: cover; border-radius: 8px; }
-                .footer { position: fixed; bottom: 0; width: 100%; background: #202c33; padding: 10px; display: flex; align-items: center; box-sizing: border-box; }
-                .input-msg { flex: 1; background: #2a3942; border: none; padding: 12px; border-radius: 25px; color: white; margin: 0 10px; outline: none; }
                 #overlay { position: fixed; display: none; width: 100%; height: 100%; top: 0; left: 0; background: rgba(0,0,0,0.95); z-index: 2000; justify-content: center; align-items: center; }
             </style>
         </head>
@@ -207,7 +212,7 @@ def renderizar_interface(msgs, meu_nome, cor_minha, cor_outra, parceiro):
                     <div style="width:35px; height:35px; background:{{cor_minha}}; border-radius:50%; margin-right:10px; display:flex; align-items:center; justify-content:center; font-weight:bold;">{{parceiro[0]}}</div>
                     <div><span style="font-weight:bold;">{{parceiro}}</span><br><small style="color:#00a884;">online</small></div>
                 </div>
-                <div style="display:flex; gap: 20px;">
+                <div style="display:flex; gap: 20px; align-items:center;">
                     <i class="fa-solid fa-eye" id="privacyBtn" onclick="togglePrivacy()" style="cursor:pointer; color:#8696a0; font-size:20px;"></i>
                     <a href="/sair" style="color:#8696a0; font-size:20px;"><i class="fa-solid fa-right-from-bracket"></i></a>
                 </div>
@@ -232,8 +237,9 @@ def renderizar_interface(msgs, meu_nome, cor_minha, cor_outra, parceiro):
             <div id="overlay" onclick="closeImg()"><img id="imgFull" style="max-width:100%; max-height:100%;"></div>
 
             <form method="POST" enctype="multipart/form-data" class="footer" id="mainForm" autocomplete="off">
-                <label for="arquivo" style="color:#8696a0; font-size:22px;"><i class="fa-solid fa-paperclip"></i></label>
-                <input type="file" id="arquivo" name="arquivo" style="display:none">
+                <label for="arquivo" class="icon-btn" id="clipLabel"><i class="fa-solid fa-paperclip"></i></label>
+                <i class="fa-solid fa-circle-xmark" id="cancelFile" onclick="clearFile()"></i>
+                <input type="file" id="arquivo" name="arquivo" style="display:none" onchange="fileSelected()">
                 <input type="text" name="msg" id="msgInput" class="input-msg" placeholder="Mensagem" autocomplete="off">
                 <button type="submit" style="background:none; border:none; color:#00a884; font-size:22px;"><i class="fa-solid fa-paper-plane"></i></button>
             </form>
@@ -270,10 +276,28 @@ def renderizar_interface(msgs, meu_nome, cor_minha, cor_outra, parceiro):
                     document.body.classList.toggle('blur-active');
                     const icon = document.getElementById('privacyBtn');
                     icon.className = document.body.classList.contains('blur-active') ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
+                    icon.style.color = document.body.classList.contains('blur-active') ? '#ef5350' : '#8696a0';
+                }
+
+                function fileSelected() {
+                    const fileInput = document.getElementById('arquivo');
+                    if (fileInput.files.length > 0) {
+                        document.getElementById('clipLabel').classList.add('clip-active');
+                        document.getElementById('cancelFile').style.display = "inline";
+                        document.getElementById('msgInput').placeholder = "Foto selecionada...";
+                    }
+                }
+
+                function clearFile() {
+                    document.getElementById('arquivo').value = "";
+                    document.getElementById('clipLabel').classList.remove('clip-active');
+                    document.getElementById('cancelFile').style.display = "none";
+                    document.getElementById('msgInput').placeholder = "Mensagem";
                 }
 
                 document.getElementById('mainForm').onsubmit = function() {
-                    setTimeout(() => { document.getElementById('msgInput').value = ''; }, 10);
+                    const input = document.getElementById('msgInput');
+                    setTimeout(() => { input.value = ''; clearFile(); }, 10);
                 };
 
                 function openImg(src) { document.getElementById('imgFull').src = src; document.getElementById('overlay').style.display = 'flex'; }
